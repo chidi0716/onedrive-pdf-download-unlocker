@@ -1,0 +1,59 @@
+{
+  "manifest_version": 3,
+  "name": "OneDrive SharePoint PDF Downloader",
+  "version": "1.0.0",
+  "description": "Detects the largest PDF-like content response on OneDrive/SharePoint preview pages and downloads it with one click, with the original filename, into the default Downloads folder. Also shows a floating download button on those pages.",
+  "permissions": [
+    "webRequest",
+    "webNavigation",
+    "downloads",
+    "activeTab",
+    "storage",
+    "scripting"
+  ],
+  "host_permissions": [
+    "*://*.sharepoint.com/*",
+    "*://*.sharepointonline.com/*",
+    "*://onedrive.live.com/*",
+    "*://*.officeapps.live.com/*",
+    "*://1drv.ms/*",
+    "*://*.svc.ms/*",
+    "*://*.mcas.ms/*",
+    "*://login.microsoftonline.com/*",
+    "*://login.windows.net/*",
+    "*://spoprod-a.akamaihd.net/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "下載 OneDrive / SharePoint PDF",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.sharepoint.com/*",
+        "*://*.sharepointonline.com/*",
+        "*://onedrive.live.com/*",
+        "*://*.officeapps.live.com/*",
+        "*://*.mcas.ms/*"
+      ],
+      "js": [
+        "i18n.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

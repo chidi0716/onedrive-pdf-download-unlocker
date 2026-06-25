@@ -1,0 +1,18 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Build artifacts (zip 改由 GitHub Release 附加，不進 repo)
+*.zip
+
+# Logs
+*.log
+
+# 未去識別化的原始截圖（含真實帳號/網址，不可進 repo）
+截圖/
+screenshots/raw/
+
