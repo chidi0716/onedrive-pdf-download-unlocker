@@ -77,7 +77,7 @@ Source code lives directly in this repo's root. Every official release also gets
 
 ## Delivery status
 
-Current version: 1.0.0. All `.js` files have passed syntax checks, the manifest has been validated, and the zip contents have been verified to match the source. It has not yet had full manual testing in a real browser environment — please test after loading it and report any issues.
+Current version: 1.0.0. All `.js` files have passed syntax checks, the manifest has been validated, the zip contents have been verified to match the source, and it has been manually tested in a real browser. If you run into any issues, please report them via Issues.
 
 ## License
 

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "OneDrive SharePoint PDF Downloader",
+  "name": "OneDrive / SharePoint PDF Download Unlocker",
   "version": "1.0.0",
-  "description": "Detects the largest PDF-like content response on OneDrive/SharePoint preview pages and downloads it with one click, with the original filename, into the default Downloads folder. Also shows a floating download button on those pages.",
+  "description": "Bypasses OneDrive/SharePoint's preview-only restriction: detects the network request that actually carries the file content and lets you download it with one click, with the original filename, into the default Downloads folder, via a floating button on the page.",
   "permissions": [
     "webRequest",
     "webNavigation",
@@ -33,7 +33,7 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "下載 OneDrive / SharePoint PDF",
+    "default_title": "OneDrive / SharePoint PDF Download Unlocker",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
