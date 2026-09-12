@@ -21,6 +21,17 @@
 
 const candidatesByTab = {}; // { [tabId]: [{url, size, time, contentType, filename, matchedBy, forwardHeaders}] }
 const headersByUrl = {}; // { [url]: { [headerName]: headerValue } }
+
+// Large-file transfer store (fix for issue #1: "Message exceeded maximum
+// allowed size of 64MiB"). chrome.runtime messages have a hard ~64 MiB cap,
+// and the old code base64-encoded the ENTIRE file into a single response
+// message (base64 inflates by ~33% on top of that), so any file past ~48 MB
+// failed. Instead we now stash the fetched bytes here under a transfer id and
+// let the caller pull them in chunks via GET_CHUNK, so no single message ever
+// approaches the cap.
+const transfersById = {}; // { [id]: { bytes: Uint8Array, contentType } }
+const CHUNK_SIZE = 8 * 1024 * 1024; // 8 MB of binary per chunk (~10.7 MB once base64-encoded, safely under the ~64 MiB message cap)
+const TRANSFER_TTL_MS = 5 * 60 * 1000; // drop an abandoned transfer after 5 min so the bytes don't linger in memory
 const stableFileKeyByTab = {}; // { [tabId]: string } - 「目前穩定認定」在看哪個檔案
 const pendingResetTimerByTab = {}; // { [tabId]: timeoutId } - debounce 用
 
@@ -117,26 +128,40 @@ function isLikelyStaticAsset(url, contentType) {
 
 // Capture request headers before they go out, so we can re-attach the
 // custom auth header(s) later when re-fetching the same URL ourselves.
-chrome.webRequest.onSendHeaders.addListener(
-  (details) => {
-    const lowerUrl = details.url.toLowerCase();
-    const isCandidateUrl = URL_KEYWORDS.some((k) => lowerUrl.includes(k));
-    if (!isCandidateUrl) return;
-    if (!details.requestHeaders) return;
+function onSendHeadersListener(details) {
+  const lowerUrl = details.url.toLowerCase();
+  const isCandidateUrl = URL_KEYWORDS.some((k) => lowerUrl.includes(k));
+  if (!isCandidateUrl) return;
+  if (!details.requestHeaders) return;
 
-    const captured = {};
-    for (const h of details.requestHeaders) {
-      if (isForwardableHeader(h.name) && h.value) {
-        captured[h.name] = h.value;
-      }
+  const captured = {};
+  for (const h of details.requestHeaders) {
+    if (isForwardableHeader(h.name) && h.value) {
+      captured[h.name] = h.value;
     }
-    if (Object.keys(captured).length > 0) {
-      headersByUrl[details.url] = captured;
-    }
-  },
-  { urls: ["<all_urls>"] },
-  ["requestHeaders", "extraHeaders"]
-);
+  }
+  if (Object.keys(captured).length > 0) {
+    headersByUrl[details.url] = captured;
+  }
+}
+
+// "extraHeaders" is Chrome-only and is required there to actually see some
+// of these headers; Firefox exposes them without it and throws if the flag
+// is passed, so register with it on Chrome and fall back without it on
+// Firefox (part of the cross-browser support for issue #2).
+try {
+  chrome.webRequest.onSendHeaders.addListener(
+    onSendHeadersListener,
+    { urls: ["<all_urls>"] },
+    ["requestHeaders", "extraHeaders"]
+  );
+} catch (e) {
+  chrome.webRequest.onSendHeaders.addListener(
+    onSendHeadersListener,
+    { urls: ["<all_urls>"] },
+    ["requestHeaders"]
+  );
+}
 
 function addCandidate(tabId, entry) {
   if (!candidatesByTab[tabId]) candidatesByTab[tabId] = [];
@@ -294,12 +319,14 @@ chrome.webNavigation.onHistoryStateUpdated.addListener((details) => {
 // here - that is what caused "URL.createObjectURL is not a function".
 // Instead we fetch the bytes here (where CORS doesn't apply and we can
 // attach the captured auth header), then hand the bytes back to the
-// popup as a base64 string. The popup injects a tiny script into the
-// actual tab, which DOES have a DOM, to rebuild the Blob, create the
-// object URL, and trigger the download there.
-function arrayBufferToBase64(buffer) {
+// popup/content script, which DOES have a DOM, to rebuild the Blob, create
+// the object URL, and trigger the download there.
+//
+// Small files are returned inline as a base64 string in one message (the
+// original fast path). Large files are streamed in chunks via GET_CHUNK to
+// stay under the ~64 MiB runtime-message cap (issue #1).
+function uint8ToBase64(bytes) {
   let binary = "";
-  const bytes = new Uint8Array(buffer);
   const chunkSize = 0x8000;
   for (let i = 0; i < bytes.length; i += chunkSize) {
     binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
@@ -331,8 +358,33 @@ async function handleDownload(msg) {
     }
 
     const contentType = resp.headers.get("content-type") || "application/pdf";
-    const base64 = arrayBufferToBase64(buffer);
-    return { ok: true, base64, contentType, size: buffer.byteLength };
+    const bytes = new Uint8Array(buffer);
+
+    // Small enough to fit comfortably in one message: return inline (fast path).
+    if (bytes.byteLength <= CHUNK_SIZE) {
+      return { ok: true, base64: uint8ToBase64(bytes), contentType, size: bytes.byteLength };
+    }
+
+    // Too big for one message: stash the bytes and hand back a transfer id.
+    // The caller pulls them chunk-by-chunk via GET_CHUNK (see issue #1).
+    const transferId =
+      self.crypto && crypto.randomUUID
+        ? crypto.randomUUID()
+        : String(Date.now()) + "-" + Math.random().toString(16).slice(2);
+    transfersById[transferId] = { bytes, contentType };
+    setTimeout(() => {
+      delete transfersById[transferId];
+    }, TRANSFER_TTL_MS);
+
+    return {
+      ok: true,
+      streamed: true,
+      transferId,
+      contentType,
+      size: bytes.byteLength,
+      totalChunks: Math.ceil(bytes.byteLength / CHUNK_SIZE),
+      chunkSize: CHUNK_SIZE,
+    };
   } catch (e) {
     return { ok: false, error: String(e && e.message ? e.message : e) };
   }
@@ -354,5 +406,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.type === "DOWNLOAD_FILE") {
     handleDownload(msg).then(sendResponse);
     return true; // keep the message channel open for the async response
+  }
+  // Pull one chunk of a large streamed transfer (issue #1). Each chunk is a
+  // small, self-contained message, so we never hit the ~64 MiB message cap.
+  if (msg && msg.type === "GET_CHUNK") {
+    const t = transfersById[msg.transferId];
+    if (!t) {
+      sendResponse({ ok: false, error: "transfer expired or not found" });
+      return;
+    }
+    const chunkSize = msg.chunkSize || CHUNK_SIZE;
+    const start = msg.index * chunkSize;
+    const end = Math.min(start + chunkSize, t.bytes.byteLength);
+    if (start >= t.bytes.byteLength) {
+      sendResponse({ ok: false, error: "chunk index out of range" });
+      return;
+    }
+    sendResponse({ ok: true, base64: uint8ToBase64(t.bytes.subarray(start, end)) });
+    return;
+  }
+  // Caller finished (or aborted) pulling: free the bytes immediately rather
+  // than waiting for the TTL timer.
+  if (msg && msg.type === "RELEASE_TRANSFER") {
+    delete transfersById[msg.transferId];
+    sendResponse({ ok: true });
+    return;
   }
 });

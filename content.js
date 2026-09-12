@@ -547,6 +547,50 @@
     }
   }
 
+  function base64ToUint8(b64) {
+    const chars = atob(b64);
+    const arr = new Uint8Array(chars.length);
+    for (let i = 0; i < chars.length; i++) arr[i] = chars.charCodeAt(i);
+    return arr;
+  }
+
+  function concatUint8(parts) {
+    let total = 0;
+    for (const p of parts) total += p.length;
+    const out = new Uint8Array(total);
+    let offset = 0;
+    for (const p of parts) {
+      out.set(p, offset);
+      offset += p.length;
+    }
+    return out;
+  }
+
+  // Turn a DOWNLOAD_FILE response into the raw bytes. Small files arrive
+  // inline as base64; large ones are pulled chunk-by-chunk (issue #1) so no
+  // single runtime message approaches the ~64 MiB cap.
+  async function bytesFromResponse(resp) {
+    if (!resp.streamed) return base64ToUint8(resp.base64);
+    const parts = [];
+    for (let i = 0; i < resp.totalChunks; i++) {
+      const chunk = await chrome.runtime.sendMessage({
+        type: "GET_CHUNK",
+        transferId: resp.transferId,
+        index: i,
+        chunkSize: resp.chunkSize,
+      });
+      if (!chunk || !chunk.ok) {
+        throw new Error((chunk && chunk.error) || "chunk transfer failed");
+      }
+      parts.push(base64ToUint8(chunk.base64));
+    }
+    chrome.runtime.sendMessage(
+      { type: "RELEASE_TRANSFER", transferId: resp.transferId },
+      () => void chrome.runtime.lastError
+    );
+    return concatUint8(parts);
+  }
+
   async function onBtnClick() {
     if (!currentCandidate) return;
     const candidate = currentCandidate;
@@ -570,10 +614,8 @@
         return;
       }
 
-      const byteChars = atob(resp.base64);
-      const byteNumbers = new Array(byteChars.length);
-      for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
-      const blob = new Blob([new Uint8Array(byteNumbers)], {
+      const bytes = await bytesFromResponse(resp);
+      const blob = new Blob([bytes], {
         type: resp.contentType || "application/pdf",
       });
       const blobUrl = URL.createObjectURL(blob);

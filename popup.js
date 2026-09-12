@@ -149,10 +149,77 @@ async function saveBytesInTab(tabId, base64, filename, contentType) {
   return results && results[0] ? results[0].result : { ok: false, error: "no result" };
 }
 
+function base64ToUint8(b64) {
+  const chars = atob(b64);
+  const arr = new Uint8Array(chars.length);
+  for (let i = 0; i < chars.length; i++) arr[i] = chars.charCodeAt(i);
+  return arr;
+}
+
+function concatUint8(parts) {
+  let total = 0;
+  for (const p of parts) total += p.length;
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const p of parts) {
+    out.set(p, offset);
+    offset += p.length;
+  }
+  return out;
+}
+
+// Pull a large streamed transfer chunk-by-chunk (issue #1) and reassemble it
+// in the popup. Small files still arrive inline as base64.
+async function bytesFromResponse(resp) {
+  const parts = [];
+  for (let i = 0; i < resp.totalChunks; i++) {
+    const chunk = await chrome.runtime.sendMessage({
+      type: "GET_CHUNK",
+      transferId: resp.transferId,
+      index: i,
+      chunkSize: resp.chunkSize,
+    });
+    if (!chunk || !chunk.ok) {
+      throw new Error((chunk && chunk.error) || "chunk transfer failed");
+    }
+    parts.push(base64ToUint8(chunk.base64));
+  }
+  chrome.runtime.sendMessage(
+    { type: "RELEASE_TRANSFER", transferId: resp.transferId },
+    () => void chrome.runtime.lastError
+  );
+  return concatUint8(parts);
+}
+
+// Large files can't be handed to the tab via executeScript either (its args
+// hit the same ~64 MiB message cap), so reassemble the bytes here and save
+// them with chrome.downloads using a blob URL from the popup's own context.
+async function saveLargeViaDownloads(resp, filename) {
+  const bytes = await bytesFromResponse(resp);
+  const blob = new Blob([bytes], { type: resp.contentType || "application/pdf" });
+  const blobUrl = URL.createObjectURL(blob);
+  try {
+    const downloadId = await chrome.downloads.download({
+      url: blobUrl,
+      filename,
+      saveAs: false,
+    });
+    // Give the download time to read the blob before we revoke the URL.
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+    return { ok: true, size: blob.size, downloadId };
+  } catch (e) {
+    URL.revokeObjectURL(blobUrl);
+    return { ok: false, error: String(e && e.message ? e.message : e) };
+  }
+}
+
 async function downloadFile(tabId, url, filename, referrer, headers) {
   const fetched = await fetchFileBytes(url, filename, referrer, headers);
   if (!fetched || !fetched.ok) {
     return fetched || { ok: false, error: "no response from background" };
+  }
+  if (fetched.streamed) {
+    return saveLargeViaDownloads(fetched, filename);
   }
   const saved = await saveBytesInTab(tabId, fetched.base64, filename, fetched.contentType);
   if (!saved || !saved.ok) {

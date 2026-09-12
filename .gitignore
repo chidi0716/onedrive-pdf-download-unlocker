@@ -8,6 +8,8 @@ Thumbs.db
 
 # Build artifacts (zip 改由 GitHub Release 附加，不進 repo)
 *.zip
+dist/
+.build-staging/
 
 # Logs
 *.log

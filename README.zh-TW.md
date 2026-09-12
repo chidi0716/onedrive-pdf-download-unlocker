@@ -2,7 +2,7 @@
 
 # OneDrive / SharePoint PDF 下載限制繞過工具（瀏覽器擴充功能）
 
-最後更新：2026-06-26（版本 1.0.0）
+最後更新：2026-09-13（版本 1.1.0）
 
 ## 這是什麼
 
@@ -33,13 +33,36 @@
 
 ## 安裝方式
 
-目前未上架 Chrome 線上應用程式商店，請用「載入未封裝項目」的方式安裝：
+目前未上架任何商店，請用「載入未封裝／臨時項目」的方式安裝。
 
-1. 到本專案的 [Releases](../../releases) 頁面，下載最新版的 `onedrive-pdf-download-unlocker.zip` 並解壓縮（或直接 clone/下載這個 repo 的原始碼）。
+### Chrome / Edge
+
+1. 到本專案的 [Releases](../../releases) 頁面，下載最新版的 `onedrive-pdf-download-unlocker-chrome.zip` 並解壓縮（或直接 clone/下載這個 repo 的原始碼）。
 2. 開啟 Chrome（或 Edge），網址列輸入 `chrome://extensions`（Edge 為 `edge://extensions`）。
 3. 右上角開啟「開發人員模式」。
 4. 點「載入未封裝項目」，選擇剛剛解壓縮出來的資料夾（裡面要能直接看到 `manifest.json`）。
 5. 安裝完成後，到 OneDrive / SharePoint 的 PDF 預覽頁面測試，應該會看到浮出的下載按鈕。
+
+### Firefox（臨時載入，供測試）
+
+Firefox 需要跟 Chrome 不同的 `background` manifest 設定，所以用另一個打包檔（`onedrive-pdf-download-unlocker-firefox.zip`）。該 zip 內已附上正確的 `manifest.json`，直接：
+
+1. 從 [Releases](../../releases) 下載 `onedrive-pdf-download-unlocker-firefox.zip` 並解壓縮。
+2. 網址列輸入 `about:debugging#/runtime/this-firefox`。
+3. 點「載入臨時附加元件…」，選擇解壓後資料夾裡的 `manifest.json`。
+4. 到 OneDrive / SharePoint 的 PDF 預覽頁面測試。
+
+> 注意：臨時附加元件在**重開 Firefox 後就會消失**。要在一般版 Firefox 永久安裝，需經 Mozilla（addons.mozilla.org）簽章；這會等測試確認可用後再處理。
+
+### 自行打包
+
+執行 `build.ps1`（PowerShell）即可在 `dist/` 產出兩個 zip：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File build.ps1
+```
+
+它會用 `manifest.json` 打 Chrome 版，並自動把 `manifest.firefox.json` 改名成 `manifest.json` 打 Firefox 版。
 
 ## 核心運作方式
 
@@ -61,8 +84,10 @@
 
 ## 檔案結構
 
-- `manifest.json` - 擴充功能設定
-- `background.js` - 監聽網路請求、偵測檔案、處理同分頁換檔重置（含防抖邏輯）
+- `manifest.json` - 擴充功能設定（Chrome / Edge）
+- `manifest.firefox.json` - Firefox 版 manifest（用 `background.scripts` 取代 service worker；打包時會改名成 `manifest.json`）
+- `build.ps1` - 打包腳本，在 `dist/` 產出 Chrome 與 Firefox 兩個 zip
+- `background.js` - 監聽網路請求、偵測檔案、處理同分頁換檔重置（含防抖邏輯）、大型檔案分塊傳輸
 - `content.js` - 在頁面注入懸浮下載按鈕，含定位、主題判斷、a11y、關閉鈕顯示邏輯
 - `i18n.js` - 中英文字串字典 + 語言儲存/讀取
 - `popup.js` / `popup.html` - 點擊擴充功能圖示彈出的視窗（含語言切換、候選檔案清單）
@@ -73,11 +98,17 @@
 
 ## 版本與下載
 
-原始碼直接放在這個 repo 的根目錄；每個正式版本會在 [Releases](../../releases) 頁面額外附上打包好的 `onedrive-pdf-download-unlocker.zip`，方便不想 clone 原始碼的人直接下載安裝。版本紀錄請見 [CHANGELOG.md](./CHANGELOG.md)。
+原始碼直接放在這個 repo 的根目錄；每個版本會在 [Releases](../../releases) 頁面附上打包好的 zip（`-chrome.zip` 與 `-firefox.zip`），方便不想 clone 原始碼的人直接下載安裝。版本紀錄請見 [CHANGELOG.md](./CHANGELOG.md)。
 
 ## 交付狀態
 
-目前版本 1.0.0。所有 `.js` 檔已通過語法檢查，manifest 已驗證，zip 內容已比對與原始碼一致，並已在真實瀏覽器環境完成人工測試。若使用上遇到任何問題，歡迎透過 Issues 回報。
+目前版本 **1.1.0（測試版 / pre-release）**。
+
+- 所有 `.js` 檔通過語法檢查，載入執行無錯誤。
+- **v1.1.0 的改動尚未在真實環境端對端驗證**：大型檔案（分塊）下載修正還沒對真的 >64 MB SharePoint 檔跑過，Firefox 版也還沒實際載入 Firefox 測試。一般情況（正常大小 PDF、Chrome / Edge）走的是未更動的原本路徑。
+- 歡迎協助測試——請透過 Issues 回報結果（瀏覽器、檔案大小、成功／失敗）。等大型檔案修正與 Firefox 支援確認可用後，會把此版本從測試版轉為正式版。
+
+v1.0.0 仍保留在 [Releases](../../releases) 頁面，可作為退回的備援版本。
 
 ## License
 

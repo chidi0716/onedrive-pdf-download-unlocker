@@ -2,7 +2,7 @@
 
 # OneDrive / SharePoint PDF Download Unlocker (Browser Extension)
 
-Last updated: 2026-06-26 (version 1.0.0)
+Last updated: 2026-09-13 (version 1.1.0)
 
 ## What this is
 
@@ -33,13 +33,36 @@ The extension continuously watches network requests as the tab loads, automatica
 
 ## Installation
 
-Not published on the Chrome Web Store yet — install it as an unpacked extension:
+Not published on any store yet — install it as an unpacked / temporary extension.
 
-1. Go to this repo's [Releases](../../releases) page and download the latest `onedrive-pdf-download-unlocker.zip`, then unzip it (or just clone/download this repo's source directly).
+### Chrome / Edge
+
+1. Go to this repo's [Releases](../../releases) page and download the latest `onedrive-pdf-download-unlocker-chrome.zip`, then unzip it (or just clone/download this repo's source directly).
 2. Open Chrome (or Edge) and go to `chrome://extensions` (`edge://extensions` on Edge).
 3. Turn on "Developer mode" in the top right.
 4. Click "Load unpacked" and select the unzipped folder (it should contain `manifest.json` directly).
 5. Once installed, open an OneDrive / SharePoint PDF preview page to test — you should see the floating download button appear.
+
+### Firefox (temporary load — for testing)
+
+Firefox uses a separate package (`onedrive-pdf-download-unlocker-firefox.zip`) because it needs a different `background` manifest key than Chrome. The zip already ships the correct `manifest.json`, so just:
+
+1. Download `onedrive-pdf-download-unlocker-firefox.zip` from [Releases](../../releases) and unzip it.
+2. Go to `about:debugging#/runtime/this-firefox`.
+3. Click "Load Temporary Add-on…" and select the `manifest.json` inside the unzipped folder.
+4. Open an OneDrive / SharePoint PDF preview page to test.
+
+> Note: a temporary add-on is removed when you restart Firefox. Permanent installation on regular Firefox requires a Mozilla-signed build (via addons.mozilla.org); that's planned for a later release once the build is confirmed working.
+
+### Building the zips yourself
+
+Run `build.ps1` (PowerShell) to produce both zips under `dist/`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File build.ps1
+```
+
+It packages the Chrome zip from `manifest.json` and the Firefox zip with `manifest.firefox.json` renamed to `manifest.json` automatically.
 
 ## How it works
 
@@ -61,8 +84,10 @@ Not published on the Chrome Web Store yet — install it as an unpacked extensio
 
 ## File structure
 
-- `manifest.json` - extension configuration
-- `background.js` - listens to network requests, detects candidate files, handles same-tab file-switch reset (with debounce logic)
+- `manifest.json` - extension configuration (Chrome / Edge)
+- `manifest.firefox.json` - Firefox manifest variant (`background.scripts` instead of a service worker; renamed to `manifest.json` at package time)
+- `build.ps1` - packaging script that produces the Chrome and Firefox zips under `dist/`
+- `background.js` - listens to network requests, detects candidate files, handles same-tab file-switch reset (with debounce logic), and streams large downloads in chunks
 - `content.js` - injects the floating download button into the page, including positioning, theme detection, accessibility, and close-button visibility logic
 - `i18n.js` - Chinese/English string dictionary + language persistence
 - `popup.js` / `popup.html` - the popup shown when clicking the extension icon (language switcher, list of candidate files)
@@ -73,11 +98,17 @@ Not published on the Chrome Web Store yet — install it as an unpacked extensio
 
 ## Versions & downloads
 
-Source code lives directly in this repo's root. Every official release also gets a packaged `onedrive-pdf-download-unlocker.zip` attached on the [Releases](../../releases) page, for anyone who'd rather not clone the source. See [CHANGELOG.md](./CHANGELOG.md) for version history.
+Source code lives directly in this repo's root. Every release also gets packaged zips (`-chrome.zip` and `-firefox.zip`) attached on the [Releases](../../releases) page, for anyone who'd rather not clone the source. See [CHANGELOG.md](./CHANGELOG.md) for version history.
 
 ## Delivery status
 
-Current version: 1.0.0. All `.js` files have passed syntax checks, the manifest has been validated, the zip contents have been verified to match the source, and it has been manually tested in a real browser. If you run into any issues, please report them via Issues.
+Current version: **1.1.0 (pre-release / testing)**.
+
+- All `.js` files pass syntax checks and load/execute without errors.
+- **The v1.1.0 changes are not yet verified end-to-end on real devices:** the large-file (chunked) download fix has not been run against an actual >64 MB SharePoint file, and the Firefox build has not been loaded in Firefox yet. The common case (normal-sized PDFs on Chrome / Edge) runs on the unchanged fast path.
+- Testers welcome — please report results (browser, file size, success/failure) via Issues. Once the large-file fix and Firefox support are confirmed, this will be promoted from pre-release to a normal release.
+
+The v1.0.0 release remains available on the [Releases](../../releases) page as a fallback.
 
 ## License
 
