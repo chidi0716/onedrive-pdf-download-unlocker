@@ -2,7 +2,7 @@
 
 # OneDrive / SharePoint PDF Download Unlocker (Browser Extension)
 
-Last updated: 2026-09-13 (version 1.1.0)
+Last updated: 2026-09-24 (version 1.1.0)
 
 ## What this is
 
@@ -102,11 +102,12 @@ Source code lives directly in this repo's root. Every release also gets packaged
 
 ## Delivery status
 
-Current version: **1.1.0 (pre-release / testing)**.
+Current version: **1.1.0**.
 
 - All `.js` files pass syntax checks and load/execute without errors.
-- **The v1.1.0 changes are not yet verified end-to-end on real devices:** the large-file (chunked) download fix has not been run against an actual >64 MB SharePoint file, and the Firefox build has not been loaded in Firefox yet. The common case (normal-sized PDFs on Chrome / Edge) runs on the unchanged fast path.
-- Testers welcome — please report results (browser, file size, success/failure) via Issues. Once the large-file fix and Firefox support are confirmed, this will be promoted from pre-release to a normal release.
+- **Large-file download (issue #1):** tested end-to-end in Chromium against a mock SharePoint server that requires the `X-SPOPacToken` header, via both the floating button and the popup, at 8 MB, just over 8 MB, 70 MB, 150 MB and 400 MB. Every download came out byte-for-byte identical to the original. The same 70 MB test hangs on v1.0.0, which reproduces the original bug.
+- **Firefox (issue #2):** confirmed working by the user who requested it.
+- Please report problems (browser, file size, what happened) via Issues.
 
 The v1.0.0 release remains available on the [Releases](../../releases) page as a fallback.
 
