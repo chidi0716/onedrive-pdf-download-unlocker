@@ -2,11 +2,11 @@
 
 # OneDrive / SharePoint PDF Download Unlocker (Browser Extension)
 
-Last updated: 2026-09-13 (version 1.1.0)
+Last updated: 2026-09-24 (version 1.1.0)
 
 ## What this is
 
-A Chrome / Edge extension (Manifest V3) that bypasses OneDrive / SharePoint's "preview only, no download" restriction and saves the PDF to your computer in one click.
+A browser extension (Manifest V3) for Chrome, Edge, and Firefox that bypasses OneDrive / SharePoint's "preview only, no download" restriction and saves the PDF to your computer in one click.
 
 ### The problem
 
@@ -43,7 +43,7 @@ Not published on any store yet — install it as an unpacked / temporary extensi
 4. Click "Load unpacked" and select the unzipped folder (it should contain `manifest.json` directly).
 5. Once installed, open an OneDrive / SharePoint PDF preview page to test — you should see the floating download button appear.
 
-### Firefox (temporary load — for testing)
+### Firefox (temporary load)
 
 Firefox uses a separate package (`onedrive-pdf-download-unlocker-firefox.zip`) because it needs a different `background` manifest key than Chrome. The zip already ships the correct `manifest.json`, so just:
 
@@ -52,7 +52,7 @@ Firefox uses a separate package (`onedrive-pdf-download-unlocker-firefox.zip`) b
 3. Click "Load Temporary Add-on…" and select the `manifest.json` inside the unzipped folder.
 4. Open an OneDrive / SharePoint PDF preview page to test.
 
-> Note: a temporary add-on is removed when you restart Firefox. Permanent installation on regular Firefox requires a Mozilla-signed build (via addons.mozilla.org); that's planned for a later release once the build is confirmed working.
+> Note: a temporary add-on is removed when you restart Firefox. Permanent installation on regular Firefox requires a Mozilla-signed build (via addons.mozilla.org), which isn't available yet — for now, reload it after each restart.
 
 ### Building the zips yourself
 
@@ -81,6 +81,8 @@ It packages the Chrome zip from `manifest.json` and the Firefox zip with `manife
 7. **`host_permissions` covers the Microsoft domains actually used**: besides the original five domains, adds `svc.ms` (the backend that actually serves file content — without it, share-link pages with no native download button go undetected), `mcas.ms` (a security proxy used by some enterprises/schools), sign-in domains, and static-asset domains, instead of a blanket `*://*/*`.
 8. **The close button never gets in the way, and is never unreachable**: hidden by default, fades in when the mouse is over the download or close button, and fades out 0.3s after the mouse leaves (giving the cursor time to move across); Tab focus also reveals it correctly (controlled via `opacity` rather than `display:none`, since the latter is unreachable by keyboard focus entirely).
 9. **Fixed a feedback loop where the floating button "drifted downward" on its own**: the selector used to find the page's "native download button" could previously mistake the extension's own injected button for a native one (because its own `aria-label` text also contains the word "Download"), causing each reposition pass to use itself as the anchor and drift further down without stopping. The selector now explicitly excludes the extension's own injected node.
+10. **Large files are no longer capped at 64 MiB** (issue #1): files over 8 MB are handed from the background script to the page in 8 MB chunks instead of one giant message, so the browser's ~64 MiB message limit no longer applies (tested up to 400 MB).
+11. **Works on Chrome, Edge and Firefox**: Firefox uses its own package (see Installation) with the background-script setup Firefox requires.
 
 ## File structure
 
@@ -102,11 +104,12 @@ Source code lives directly in this repo's root. Every release also gets packaged
 
 ## Delivery status
 
-Current version: **1.1.0 (pre-release / testing)**.
+Current version: **1.1.0**.
 
 - All `.js` files pass syntax checks and load/execute without errors.
-- **The v1.1.0 changes are not yet verified end-to-end on real devices:** the large-file (chunked) download fix has not been run against an actual >64 MB SharePoint file, and the Firefox build has not been loaded in Firefox yet. The common case (normal-sized PDFs on Chrome / Edge) runs on the unchanged fast path.
-- Testers welcome — please report results (browser, file size, success/failure) via Issues. Once the large-file fix and Firefox support are confirmed, this will be promoted from pre-release to a normal release.
+- **Large-file download (issue #1):** tested end-to-end in Chromium against a mock SharePoint server that requires the `X-SPOPacToken` header, via both the floating button and the popup, at 8 MB, just over 8 MB, 70 MB, 150 MB and 400 MB. Every download came out byte-for-byte identical to the original. The same 70 MB test hangs on v1.0.0, which reproduces the original bug.
+- **Firefox (issue #2):** confirmed working by the user who requested it.
+- Please report problems (browser, file size, what happened) via Issues.
 
 The v1.0.0 release remains available on the [Releases](../../releases) page as a fallback.
 

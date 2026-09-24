@@ -2,9 +2,9 @@
 
 本專案版本紀錄遵循 [Keep a Changelog](https://keepachangelog.com/) 格式，版本號採用 [Semantic Versioning](https://semver.org/)。
 
-## [1.1.0] - 2026-09-13
+## [1.1.0] - 2026-09-24
 
-> 測試版（pre-release）。大型檔案下載與 Firefox 支援尚待實機測試，歡迎回報結果。
+> 由 1.1.0-rc.1 測試版（2026-09-13）轉為正式版，程式碼與測試版相同。
 
 ### 新增
 

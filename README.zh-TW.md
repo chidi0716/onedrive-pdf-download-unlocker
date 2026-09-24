@@ -2,11 +2,11 @@
 
 # OneDrive / SharePoint PDF 下載限制繞過工具（瀏覽器擴充功能）
 
-最後更新：2026-09-13（版本 1.1.0）
+最後更新：2026-09-24（版本 1.1.0）
 
 ## 這是什麼
 
-一個 Chrome / Edge 擴充功能（Manifest V3），用來繞過 OneDrive、SharePoint「只能線上預覽、不給下載」的限制，一鍵把 PDF 存到本機。
+一個瀏覽器擴充功能（Manifest V3，支援 Chrome、Edge、Firefox），用來繞過 OneDrive、SharePoint「只能線上預覽、不給下載」的限制，一鍵把 PDF 存到本機。
 
 ### 要解決的問題
 
@@ -43,7 +43,7 @@
 4. 點「載入未封裝項目」，選擇剛剛解壓縮出來的資料夾（裡面要能直接看到 `manifest.json`）。
 5. 安裝完成後，到 OneDrive / SharePoint 的 PDF 預覽頁面測試，應該會看到浮出的下載按鈕。
 
-### Firefox（臨時載入，供測試）
+### Firefox（臨時載入）
 
 Firefox 需要跟 Chrome 不同的 `background` manifest 設定，所以用另一個打包檔（`onedrive-pdf-download-unlocker-firefox.zip`）。該 zip 內已附上正確的 `manifest.json`，直接：
 
@@ -52,7 +52,7 @@ Firefox 需要跟 Chrome 不同的 `background` manifest 設定，所以用另�
 3. 點「載入臨時附加元件…」，選擇解壓後資料夾裡的 `manifest.json`。
 4. 到 OneDrive / SharePoint 的 PDF 預覽頁面測試。
 
-> 注意：臨時附加元件在**重開 Firefox 後就會消失**。要在一般版 Firefox 永久安裝，需經 Mozilla（addons.mozilla.org）簽章；這會等測試確認可用後再處理。
+> 注意：臨時附加元件在**重開 Firefox 後就會消失**。要在一般版 Firefox 永久安裝，需經 Mozilla（addons.mozilla.org）簽章，目前尚未提供；在那之前，每次重開 Firefox 後需重新載入一次。
 
 ### 自行打包
 
@@ -81,6 +81,8 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 7. **`host_permissions` 涵蓋實際會用到的微軟網域**：除原本五個網域外，加入 `svc.ms`（實際傳送檔案內容的後端服務，缺少會偵測不到沒有原生下載按鈕的分享連結頁面）、`mcas.ms`（部分企業/學校用的安全代理）、登入網域與靜態資源網域，不用 `*://*/*`。
 8. **關閉鈕不會擋路、也不會點不到**：平常不顯示，滑鼠移到下載按鈕或關閉鈕上才淡入，移開後延遲 0.3 秒才淡出，讓滑鼠有時間移過去；Tab 鍵聚焦也會正常顯示（用 `opacity` 而不是 `display:none` 控制，否則鍵盤完全聚焦不到）。
 9. **修掉懸浮按鈕「自己往下跑」的回授迴圈**：搜尋「頁面上原生下載按鈕」的選擇器，原本可能誤把擴充功能自己注入的按鈕當成原生按鈕（因為自己的 `aria-label` 文字裡也含有「Download」字樣），導致每次重新定位都把自己當錨點、越跑越下面、停不下來。現在搜尋時會明確排除自己注入的節點。
+10. **大型檔案不再受 64 MiB 限制**（issue #1）：超過 8 MB 的檔案改成每塊 8 MB 分批從背景傳到頁面，不再一次塞進單一訊息，因此不受瀏覽器約 64 MiB 的訊息上限影響（實測到 400 MB）。
+11. **支援 Chrome、Edge、Firefox**：Firefox 使用獨立的安裝包（見「安裝方式」），內含 Firefox 需要的背景腳本設定。
 
 ## 檔案結構
 
@@ -102,11 +104,12 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 
 ## 交付狀態
 
-目前版本 **1.1.0（測試版 / pre-release）**。
+目前版本 **1.1.0**。
 
 - 所有 `.js` 檔通過語法檢查，載入執行無錯誤。
-- **v1.1.0 的改動尚未在真實環境端對端驗證**：大型檔案（分塊）下載修正還沒對真的 >64 MB SharePoint 檔跑過，Firefox 版也還沒實際載入 Firefox 測試。一般情況（正常大小 PDF、Chrome / Edge）走的是未更動的原本路徑。
-- 歡迎協助測試——請透過 Issues 回報結果（瀏覽器、檔案大小、成功／失敗）。等大型檔案修正與 Firefox 支援確認可用後，會把此版本從測試版轉為正式版。
+- **大型檔案下載（issue #1）**：在 Chromium 中對一個「必須帶 `X-SPOPacToken` 標頭才給檔案」的模擬 SharePoint 伺服器做端對端測試，浮動按鈕與 popup 兩條路徑都測過，檔案大小涵蓋 8 MB、略超過 8 MB、70 MB、150 MB、400 MB，下載結果與原檔逐位元組完全一致。同樣的 70 MB 測試在 v1.0.0 會卡住，重現了原本的問題。
+- **Firefox（issue #2）**：已由提出需求的使用者確認可正常使用。
+- 遇到問題請透過 Issues 回報（瀏覽器、檔案大小、發生什麼狀況）。
 
 v1.0.0 仍保留在 [Releases](../../releases) 頁面，可作為退回的備援版本。
 
