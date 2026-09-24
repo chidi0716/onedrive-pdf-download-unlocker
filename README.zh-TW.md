@@ -6,7 +6,7 @@
 
 ## 這是什麼
 
-一個 Chrome / Edge 擴充功能（Manifest V3），用來繞過 OneDrive、SharePoint「只能線上預覽、不給下載」的限制，一鍵把 PDF 存到本機。
+一個瀏覽器擴充功能（Manifest V3，支援 Chrome、Edge、Firefox），用來繞過 OneDrive、SharePoint「只能線上預覽、不給下載」的限制，一鍵把 PDF 存到本機。
 
 ### 要解決的問題
 

@@ -6,7 +6,7 @@ Last updated: 2026-09-13 (version 1.1.0)
 
 ## What this is
 
-A Chrome / Edge extension (Manifest V3) that bypasses OneDrive / SharePoint's "preview only, no download" restriction and saves the PDF to your computer in one click.
+A browser extension (Manifest V3) for Chrome, Edge, and Firefox that bypasses OneDrive / SharePoint's "preview only, no download" restriction and saves the PDF to your computer in one click.
 
 ### The problem
 
