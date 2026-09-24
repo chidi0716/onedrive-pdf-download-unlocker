@@ -43,7 +43,7 @@
 4. 點「載入未封裝項目」，選擇剛剛解壓縮出來的資料夾（裡面要能直接看到 `manifest.json`）。
 5. 安裝完成後，到 OneDrive / SharePoint 的 PDF 預覽頁面測試，應該會看到浮出的下載按鈕。
 
-### Firefox（臨時載入，供測試）
+### Firefox（臨時載入）
 
 Firefox 需要跟 Chrome 不同的 `background` manifest 設定，所以用另一個打包檔（`onedrive-pdf-download-unlocker-firefox.zip`）。該 zip 內已附上正確的 `manifest.json`，直接：
 
@@ -52,7 +52,7 @@ Firefox 需要跟 Chrome 不同的 `background` manifest 設定，所以用另�
 3. 點「載入臨時附加元件…」，選擇解壓後資料夾裡的 `manifest.json`。
 4. 到 OneDrive / SharePoint 的 PDF 預覽頁面測試。
 
-> 注意：臨時附加元件在**重開 Firefox 後就會消失**。要在一般版 Firefox 永久安裝，需經 Mozilla（addons.mozilla.org）簽章；這會等測試確認可用後再處理。
+> 注意：臨時附加元件在**重開 Firefox 後就會消失**。要在一般版 Firefox 永久安裝，需經 Mozilla（addons.mozilla.org）簽章，目前尚未提供；在那之前，每次重開 Firefox 後需重新載入一次。
 
 ### 自行打包
 
@@ -81,6 +81,8 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 7. **`host_permissions` 涵蓋實際會用到的微軟網域**：除原本五個網域外，加入 `svc.ms`（實際傳送檔案內容的後端服務，缺少會偵測不到沒有原生下載按鈕的分享連結頁面）、`mcas.ms`（部分企業/學校用的安全代理）、登入網域與靜態資源網域，不用 `*://*/*`。
 8. **關閉鈕不會擋路、也不會點不到**：平常不顯示，滑鼠移到下載按鈕或關閉鈕上才淡入，移開後延遲 0.3 秒才淡出，讓滑鼠有時間移過去；Tab 鍵聚焦也會正常顯示（用 `opacity` 而不是 `display:none` 控制，否則鍵盤完全聚焦不到）。
 9. **修掉懸浮按鈕「自己往下跑」的回授迴圈**：搜尋「頁面上原生下載按鈕」的選擇器，原本可能誤把擴充功能自己注入的按鈕當成原生按鈕（因為自己的 `aria-label` 文字裡也含有「Download」字樣），導致每次重新定位都把自己當錨點、越跑越下面、停不下來。現在搜尋時會明確排除自己注入的節點。
+10. **大型檔案不再受 64 MiB 限制**（issue #1）：超過 8 MB 的檔案改成每塊 8 MB 分批從背景傳到頁面，不再一次塞進單一訊息，因此不受瀏覽器約 64 MiB 的訊息上限影響（實測到 400 MB）。
+11. **支援 Chrome、Edge、Firefox**：Firefox 使用獨立的安裝包（見「安裝方式」），內含 Firefox 需要的背景腳本設定。
 
 ## 檔案結構
 

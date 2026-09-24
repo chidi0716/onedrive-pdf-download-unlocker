@@ -43,7 +43,7 @@ Not published on any store yet — install it as an unpacked / temporary extensi
 4. Click "Load unpacked" and select the unzipped folder (it should contain `manifest.json` directly).
 5. Once installed, open an OneDrive / SharePoint PDF preview page to test — you should see the floating download button appear.
 
-### Firefox (temporary load — for testing)
+### Firefox (temporary load)
 
 Firefox uses a separate package (`onedrive-pdf-download-unlocker-firefox.zip`) because it needs a different `background` manifest key than Chrome. The zip already ships the correct `manifest.json`, so just:
 
@@ -52,7 +52,7 @@ Firefox uses a separate package (`onedrive-pdf-download-unlocker-firefox.zip`) b
 3. Click "Load Temporary Add-on…" and select the `manifest.json` inside the unzipped folder.
 4. Open an OneDrive / SharePoint PDF preview page to test.
 
-> Note: a temporary add-on is removed when you restart Firefox. Permanent installation on regular Firefox requires a Mozilla-signed build (via addons.mozilla.org); that's planned for a later release once the build is confirmed working.
+> Note: a temporary add-on is removed when you restart Firefox. Permanent installation on regular Firefox requires a Mozilla-signed build (via addons.mozilla.org), which isn't available yet — for now, reload it after each restart.
 
 ### Building the zips yourself
 
@@ -81,6 +81,8 @@ It packages the Chrome zip from `manifest.json` and the Firefox zip with `manife
 7. **`host_permissions` covers the Microsoft domains actually used**: besides the original five domains, adds `svc.ms` (the backend that actually serves file content — without it, share-link pages with no native download button go undetected), `mcas.ms` (a security proxy used by some enterprises/schools), sign-in domains, and static-asset domains, instead of a blanket `*://*/*`.
 8. **The close button never gets in the way, and is never unreachable**: hidden by default, fades in when the mouse is over the download or close button, and fades out 0.3s after the mouse leaves (giving the cursor time to move across); Tab focus also reveals it correctly (controlled via `opacity` rather than `display:none`, since the latter is unreachable by keyboard focus entirely).
 9. **Fixed a feedback loop where the floating button "drifted downward" on its own**: the selector used to find the page's "native download button" could previously mistake the extension's own injected button for a native one (because its own `aria-label` text also contains the word "Download"), causing each reposition pass to use itself as the anchor and drift further down without stopping. The selector now explicitly excludes the extension's own injected node.
+10. **Large files are no longer capped at 64 MiB** (issue #1): files over 8 MB are handed from the background script to the page in 8 MB chunks instead of one giant message, so the browser's ~64 MiB message limit no longer applies (tested up to 400 MB).
+11. **Works on Chrome, Edge and Firefox**: Firefox uses its own package (see Installation) with the background-script setup Firefox requires.
 
 ## File structure
 
