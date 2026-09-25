@@ -12,6 +12,9 @@
   if (!/powerpoint/i.test(location.hostname)) return;
   if (window.__odpdfSlidesLoaded) return;
   window.__odpdfSlidesLoaded = true;
+  // Visible state marker (also handy when troubleshooting a user's report
+  // from DevTools): waiting -> ready.
+  document.documentElement.setAttribute("data-odpdf-slides", "waiting");
 
   const I18N = window.ODPDF_I18N;
   let lang = "en";
@@ -328,6 +331,7 @@
     const poll = setInterval(() => {
       if (viewerReady()) {
         clearInterval(poll);
+        document.documentElement.setAttribute("data-odpdf-slides", "ready");
         buildUi();
       }
     }, 1000);
