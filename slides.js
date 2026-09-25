@@ -303,13 +303,15 @@
     const txtBtn = mk(tr("slidesExportText"), tr("slidesTextTitle"));
     txtBtn.style.background = "#555";
     const status = document.createElement("span");
+    // Mirror the status line onto the document so it can be read from
+    // DevTools (or a test) without finding our UI.
+    new MutationObserver(() => document.documentElement.setAttribute("data-odpdf-status", status.textContent)).observe(status, { childList: true, characterData: true, subtree: true });
     status.style.cssText = "padding:0 6px;white-space:nowrap";
     bar.append(pdfBtn, txtBtn, status);
     document.body.appendChild(bar);
 
     let busy = false;
     const run = async (withImages) => {
-      console.log("[odpdf] DEBUG run", withImages, busy);
       if (busy) return;
       busy = true;
       pdfBtn.style.opacity = txtBtn.style.opacity = ".5";
@@ -328,7 +330,6 @@
     // listener on the button never fires. Catch them on window first.
     const onPress = (e) => {
       const path = e.composedPath();
-      console.log("[odpdf] DEBUG press", e.type, e.isTrusted, path.slice(0, 3).map((n) => n.nodeName || n).join(">"), path.includes(pdfBtn));
       const hit = path.includes(pdfBtn) ? true : path.includes(txtBtn) ? false : null;
       if (hit === null) return;
       e.stopPropagation();
