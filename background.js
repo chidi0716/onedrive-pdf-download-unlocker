@@ -451,6 +451,14 @@ async function beginSlideExport(tabId, frameId, frameUrl) {
     offset = res.result.value;
   }
   slideExportByTab[tabId].offset = offset;
+  // Hide our own floating download button (content.js, top page) so it
+  // doesn't end up in the captures.
+  await cdp(tabId, "Runtime.evaluate", {
+    expression: `(() => { if (document.getElementById("__odpdf_capture_hide")) return;
+      const s = document.createElement("style"); s.id = "__odpdf_capture_hide";
+      s.textContent = "#__odpdf_btn, #__odpdf_close { display: none !important; }";
+      (document.head || document.documentElement).appendChild(s); })()`,
+  }).catch(() => {});
   return offset;
 }
 
@@ -480,6 +488,8 @@ async function slideInput(tabId, input) {
     await cdp(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
     await cdp(tabId, "Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
     await cdp(tabId, "Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+  } else if (input.kind === "move") {
+    await cdp(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x: st.offset.x + input.x, y: st.offset.y + input.y });
   } else if (input.kind === "key") {
     const code = KEY_CODES[input.key];
     if (!code) throw new Error("unsupported key " + input.key);
@@ -491,6 +501,9 @@ async function slideInput(tabId, input) {
 
 function endSlideExport(tabId) {
   if (!slideExportByTab[tabId]) return;
+  cdp(tabId, "Runtime.evaluate", {
+    expression: `(() => { const s = document.getElementById("__odpdf_capture_hide"); if (s) s.remove(); })()`,
+  }).catch(() => {});
   delete slideExportByTab[tabId];
   chrome.debugger.detach({ tabId }, () => void chrome.runtime.lastError);
 }
@@ -520,6 +533,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .then(() => sendResponse({ ok: true }))
       .catch((e) => sendResponse({ ok: false, error: e.message }));
     return true;
+  }
+  if (msg && msg.type === "SLIDES_TAB_TITLE") {
+    // The viewer frame's own title is just "PowerPoint"; the tab title
+    // carries the file name.
+    sendResponse({ title: (sender.tab && sender.tab.title) || "" });
+    return;
   }
   if (msg && msg.type === "SLIDES_END") {
     endSlideExport(sender.tab.id);

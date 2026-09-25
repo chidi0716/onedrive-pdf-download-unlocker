@@ -53,15 +53,20 @@
     return items.filter((el) => el.getBoundingClientRect().width > 0);
   }
 
-  // {current, total} from the status bar ("Slide 3 of 50"), or null.
+  // {current, total} from the status bar ("Slide 3 of 50"), or null. Found by
+  // text rather than by element, since the status bar re-renders freely.
+  const POSITION_RE = /(?:Slide|投影片|幻灯片|スライド)\s*(\d+)\s*(?:of|\/|／|，共|共)\s*(\d+)/i;
   function slidePosition() {
-    const re = /(\d+)\s*(?:of|\/|／|之|，共)\s*(\d+)/i;
-    for (const el of document.querySelectorAll("[id*=Status] *, [class*=Status] *, [class*=status] *")) {
-      if (el.childElementCount) continue;
-      const m = re.exec((el.textContent || "").trim());
-      if (m && /slide|投影片|幻灯片|スライド/i.test(el.textContent + (el.getAttribute("aria-label") || "") + (el.parentElement ? el.parentElement.textContent : ""))) {
-        return { current: +m[1], total: +m[2] };
-      }
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+      const m = POSITION_RE.exec(node.nodeValue);
+      if (m && node.parentElement && node.parentElement.getClientRects().length) return { current: +m[1], total: +m[2] };
+    }
+    // fall back to the status bar container's combined text
+    for (const el of document.querySelectorAll("[id*=Status], [class*=Status]")) {
+      const m = POSITION_RE.exec(el.textContent || "");
+      if (m) return { current: +m[1], total: +m[2] };
     }
     return null;
   }
@@ -108,7 +113,12 @@
     if (on && !st) {
       st = document.createElement("style");
       st.id = "__odpdf_hide_hints";
-      st.textContent = ".visiblePromptTextContent, .visiblePromptTextContent * { visibility: hidden !important; }";
+      // The prompt text, plus the whole empty placeholder (its dashed outline
+      // is an SVG path inside .PromptTextView). Title/body placeholders that
+      // hold real text also carry .PromptTextView, hence the :has().
+      st.textContent =
+        ".visiblePromptTextContent, .visiblePromptTextContent * { visibility: hidden !important; }" +
+        ".PromptTextView:has(.visiblePromptTextContent) { opacity: 0 !important; }"; // opacity also hides children that force visibility
       document.head.appendChild(st);
     } else if (!on && st) {
       st.remove();
@@ -147,71 +157,53 @@
     });
   }
 
-  // Bring slide `index` (0-based) on screen using trusted input: click the
-  // thumbnail after the selected one (the list may be virtualized, so we go
-  // by DOM neighbours, not absolute positions), falling back to keys.
-  // Reached = the status bar says so, or the clicked thumbnail is selected.
+  // Bring slide `index` (0-based) on screen with trusted input. Each step
+  // re-reads where we are (the thumbnail list re-renders, so elements can't
+  // be held on to): one away from the target -> click the thumbnail after the
+  // selected one (or before it, if we overshot); otherwise PageDown / PageUp.
   async function goToSlide(index) {
     const want = index + 1;
     const selectedThumb = () => thumbnails().find((t) => t.getAttribute("aria-selected") === "true") || null;
-    let target = null;
-    const reached = () => {
-      const p = slidePosition();
-      if (p && p.current === want) return true;
-      return !!(target && target.isConnected && target.getAttribute("aria-selected") === "true");
-    };
-    if (index === 0) {
-      const first = thumbnails()[0];
-      if (first) first.scrollIntoView({ block: "start" });
-      await nextFrame();
-      const p = slidePosition();
-      if (p && p.current === 1) return true;
-    }
-
+    const current = () => { const p = slidePosition(); return p ? p.current : null; };
     const tries = [];
-    for (let attempt = 0; attempt < 4 && !reached(); attempt++) {
-      let input;
-      if (attempt < 2) {
-        if (index === 0) {
-          target = thumbnails()[0] || null;
-        } else {
-          const sel = selectedThumb();
-          if (sel) {
-            sel.scrollIntoView({ block: "nearest" });
+    for (let step = 0; step < 8; step++) {
+      const cur = current();
+      if (cur === want) return true;
+      let input = null;
+      if (want === 1 && step < 2) {
+        const first = thumbnails()[0];
+        if (first) {
+          first.scrollIntoView({ block: "start" });
+          await nextFrame();
+          const b = thumbnails()[0].getBoundingClientRect();
+          input = { kind: "click", x: b.left + b.width / 2, y: b.top + b.height / 2 };
+        }
+      } else if (cur !== null && Math.abs(cur - want) === 1 && step < 4) {
+        const sel = selectedThumb();
+        if (sel) {
+          sel.scrollIntoView({ block: "nearest" });
+          await nextFrame();
+          const list = thumbnails();
+          const next = list[list.indexOf(selectedThumb()) + (want > cur ? 1 : -1)];
+          if (next) {
+            next.scrollIntoView({ block: "nearest" });
             await nextFrame();
-            const list = thumbnails();
-            const cur = selectedThumb();
-            target = cur ? list[list.indexOf(cur) + 1] || null : null;
-            if (target) target.scrollIntoView({ block: "nearest" });
-            await nextFrame();
-          } else {
-            target = null;
+            const b = next.getBoundingClientRect();
+            input = { kind: "click", x: b.left + b.width / 2, y: b.top + b.height / 2 };
           }
         }
-      } else {
-        target = null;
       }
-      if (target) {
-        const b = target.getBoundingClientRect();
-        input = { kind: "click", x: b.left + b.width / 2, y: b.top + b.height / 2 };
-      } else {
-        input = { kind: "key", key: attempt === 3 ? "PageDown" : "ArrowDown" };
-      }
+      if (!input) input = { kind: "key", key: cur !== null && cur > want ? "PageUp" : "PageDown" };
       tries.push(input.kind === "click" ? "click" : input.key);
       await send({ type: "SLIDES_INPUT", input });
       const start = performance.now();
-      while (performance.now() - start < 2500 && !reached()) await sleep(40);
-    }
-    if (reached()) {
-      // give the status bar a moment to catch up so the next step sees it
-      const start = performance.now();
-      while (performance.now() - start < 1000) {
-        const p = slidePosition();
-        if (!p || p.current === want) break;
+      while (performance.now() - start < 2000) {
+        const c = current();
+        if (c !== null && c !== cur) break;
         await sleep(40);
       }
-      return true;
     }
+    if (current() === want) return true;
     const p = slidePosition();
     const sel = selectedThumb();
     throw new Error(`could not open slide ${want} (status ${p ? p.current + "/" + p.total : "?"}, selected "${sel ? sel.getAttribute("aria-label") : "none"}", thumbs ${thumbnails().length}, tried ${tries.join(",")})`);
@@ -219,8 +211,9 @@
 
   // ---- export --------------------------------------------------------------
 
-  function fileBase() {
-    let name = (document.title || "slides").replace(/\s*[-|–].*$/, "").replace(/\.pptx?$/i, "");
+  async function fileBase() {
+    const r = await send({ type: "SLIDES_TAB_TITLE" });
+    let name = ((r && r.title) || document.title || "slides").replace(/\s*[-|–]\s*(PowerPoint|SharePoint|OneDrive).*$/i, "").replace(/\.pptx?$/i, "");
     name = name.replace(/[\\/:*?"<>|]+/g, "_").trim() || "slides";
     return name;
   }
@@ -251,6 +244,12 @@
     }));
   }
 
+  // Every page is rendered to this width regardless of how big the slide
+  // happens to be on screen, so pages come out the same size and sharp.
+  // 960 pt is the width of a standard 16:9 slide.
+  const OUTPUT_WIDTH_PX = 2000;
+  const PAGE_WIDTH_PT = 960;
+
   async function exportSlides(withImages, setStatus) {
     const t0 = performance.now();
     const p0 = slidePosition();
@@ -266,7 +265,7 @@
       for (let i = 0; i < n; i++) if (!wrapperFor(i)) { all = false; break; }
       if (all) {
         for (let i = 0; i < n; i++) texts.push(`--- Slide ${i + 1} ---\n${slideTextFrom(wrapperFor(i))}`);
-        saveBlob(new Blob([texts.join("\n\n") + "\n"], { type: "text/plain;charset=utf-8" }), fileBase() + ".txt");
+        saveBlob(new Blob([texts.join("\n\n") + "\n"], { type: "text/plain;charset=utf-8" }), (await fileBase()) + ".txt");
         return { n, secs: ((performance.now() - t0) / 1000).toFixed(1) };
       }
     }
@@ -281,16 +280,23 @@
         await goToSlide(i);
         timings.nav += performance.now() - t;
         t = performance.now();
-        const wrap = wrapperFor(i) || viewPanel();
-        await waitForStable(wrap, 250, 8000);
+        // Watch the whole view panel, not just the slide: loading overlays
+        // (e.g. while a SmartArt graphic renders) live outside the slide.
+        await waitForStable(viewPanel(), 300, 8000);
         timings.render += performance.now() - t;
         texts.push(`--- Slide ${i + 1} ---\n${slideTextFrom(wrapperFor(i))}`);
         if (withImages) {
           const box = currentSlideBox();
           if (!box) throw new Error("slide " + (i + 1) + " not found on screen");
+          // park the mouse outside the slide so no hover tooltip is captured
+          const pb = viewPanel().getBoundingClientRect();
+          await send({ type: "SLIDES_INPUT", input: { kind: "move", x: pb.right - 4, y: pb.bottom - 4 } });
+          if (bar) bar.style.visibility = "hidden";
+          await nextFrame();
           t = performance.now();
-          const r = box.rect;
-          const res = await send({ type: "SLIDES_CAPTURE", rect: { x: r.left, y: r.top, width: r.width, height: r.height }, scale: 2 });
+          const r = currentSlideBox().rect;
+          const res = await send({ type: "SLIDES_CAPTURE", rect: { x: r.left, y: r.top, width: r.width, height: r.height }, scale: OUTPUT_WIDTH_PX / r.width });
+          if (bar) bar.style.visibility = "";
           timings.capture += performance.now() - t;
           if (!res || !res.ok) throw new Error((res && res.error) || "capture failed");
           images.push(b64ToBytes(res.data));
@@ -301,9 +307,9 @@
       await send({ type: "SLIDES_END" });
     }
 
-    const base = fileBase();
+    const base = await fileBase();
     if (withImages) {
-      const pdf = window.ODPDF_PDF.buildPdf(images, 2);
+      const pdf = window.ODPDF_PDF.buildPdf(images, OUTPUT_WIDTH_PX / PAGE_WIDTH_PT);
       saveBlob(new Blob([pdf], { type: "application/pdf" }), base + ".pdf");
     }
     saveBlob(new Blob([texts.join("\n\n") + "\n"], { type: "text/plain;charset=utf-8" }), base + ".txt");
