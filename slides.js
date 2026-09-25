@@ -131,31 +131,54 @@
     if (on && !st) {
       st = document.createElement("style");
       st.id = "__odpdf_hide_hints";
-      // The prompt text, plus the whole empty placeholder (its dashed outline
-      // is an SVG path inside .PromptTextView). Title/body placeholders that
-      // hold real text also carry .PromptTextView, hence the :has().
+      // "Click to add ..." prompt text, and the selection overlay layer that
+      // draws the dashed outline around empty placeholders (editing chrome,
+      // never part of the slide itself).
       st.textContent =
         ".visiblePromptTextContent, .visiblePromptTextContent * { visibility: hidden !important; }" +
-        ".PromptTextView:has(.visiblePromptTextContent) { opacity: 0 !important; }"; // opacity also hides children that force visibility
+        ".ShapeSelectionOverlay { display: none !important; }";
       document.head.appendChild(st);
     } else if (!on && st) {
       st.remove();
     }
   }
 
-  // Wait until the slide stops changing: no DOM mutations for `quietMs`,
-  // every <img> in it decoded, fonts loaded. Gives up after `maxMs`.
+  // Last time the frame fetched anything (pictures and SmartArt graphics are
+  // loaded after the slide's text, so DOM quiet alone isn't enough).
+  let lastResourceAt = performance.now();
+  try {
+    new PerformanceObserver((list) => {
+      for (const e of list.getEntries()) {
+        // background telemetry pings would otherwise never let us settle
+        if (/RemoteUls|Telemetry|OneCollector|events\.data\.microsoft|\/collect\b|keepalive/i.test(e.name)) continue;
+        lastResourceAt = Math.max(lastResourceAt, e.responseEnd || performance.now());
+      }
+    }).observe({ type: "resource", buffered: false });
+  } catch (e) {
+    // PerformanceObserver unavailable: DOM quiet only
+  }
+
+  // Wait until the slide stops changing: no DOM mutations and no network
+  // fetches for `quietMs`, images decoded, fonts loaded. Gives up after `maxMs`.
   function waitForStable(el, quietMs, maxMs) {
     return new Promise((resolve) => {
       let timer = null;
+      let finished = false;
       const start = performance.now();
       const done = () => {
+        if (finished) return;
+        finished = true;
         obs.disconnect();
         clearTimeout(timer);
         clearTimeout(cap);
         resolve(performance.now() - start);
       };
       const check = async () => {
+        const sinceFetch = performance.now() - lastResourceAt;
+        if (sinceFetch < quietMs + 200) {
+          timer = setTimeout(check, quietMs + 200 - sinceFetch);
+          return;
+        }
         const imgs = [...el.querySelectorAll("img")].filter((i) => !i.complete);
         if (imgs.length) {
           await Promise.race([Promise.all(imgs.map((i) => i.decode().catch(() => {}))), sleep(maxMs)]);
@@ -175,35 +198,17 @@
     });
   }
 
-  function thumbByNumber(n) {
-    return thumbnails().find((t) => +t.getAttribute("aria-posinset") === n) || null;
-  }
-
-  // The thumbnail list may only render the items near the viewport; scroll
-  // it proportionally so thumbnail `n` of `total` gets rendered.
-  async function revealThumb(n, total) {
-    let t = thumbByNumber(n);
-    if (t) return t;
-    const any = thumbnails()[0];
-    if (!any) return null;
-    let sc = any.parentElement;
-    while (sc && sc.scrollHeight <= sc.clientHeight + 2) sc = sc.parentElement;
-    if (!sc) return null;
-    for (let k = 0; k < 6 && !t; k++) {
-      sc.scrollTop = Math.max(0, ((n - 1) / Math.max(1, total)) * sc.scrollHeight - sc.clientHeight / 2);
-      await nextFrame();
-      await sleep(60);
-      t = thumbByNumber(n);
-      if (!t) {
-        // nudge toward it using the numbers that are rendered
-        const nums = thumbnails().map((x) => +x.getAttribute("aria-posinset")).filter(Boolean);
-        if (nums.length && n < Math.min(...nums)) sc.scrollTop -= sc.clientHeight / 2;
-        else if (nums.length && n > Math.max(...nums)) sc.scrollTop += sc.clientHeight / 2;
-        await nextFrame();
-        t = thumbByNumber(n);
-      }
+  // The slide box once its position has stopped moving (layout can shift,
+  // e.g. when Chrome shows the "is debugging" bar).
+  async function settledSlideBox() {
+    let prev = null;
+    for (let k = 0; k < 15; k++) {
+      const box = currentSlideBox();
+      if (box && prev && ["left", "top", "width", "height"].every((p) => Math.abs(box.rect[p] - prev[p]) < 0.5)) return box;
+      prev = box && box.rect;
+      await sleep(100);
     }
-    return t;
+    return currentSlideBox();
   }
 
   // Bring slide `index` (0-based) on screen with a trusted click on its
@@ -299,6 +304,10 @@
 
     const begin = await send({ type: "SLIDES_BEGIN" });
     if (!begin || !begin.ok) throw new Error((begin && begin.error) || "could not start capture");
+    // Attaching the debugger shows an infobar that resizes the page; let the
+    // viewer re-layout before the first slide.
+    await sleep(400);
+    await waitForStable(viewPanel(), 300, 3000);
     try {
       if (withImages) hideHints(true);
       for (let i = 0; i < n; i++) {
@@ -309,7 +318,7 @@
         t = performance.now();
         // Watch the whole view panel, not just the slide: loading overlays
         // (e.g. while a SmartArt graphic renders) live outside the slide.
-        await waitForStable(viewPanel(), 300, 8000);
+        await waitForStable(viewPanel(), 300, 5000);
         timings.render += performance.now() - t;
         texts.push(`--- Slide ${i + 1} ---\n${slideTextFrom(wrapperFor(i))}`);
         if (withImages) {
@@ -321,7 +330,7 @@
           if (bar) bar.style.visibility = "hidden";
           await nextFrame();
           t = performance.now();
-          const r = currentSlideBox().rect;
+          const r = (await settledSlideBox()).rect;
           const res = await send({ type: "SLIDES_CAPTURE", rect: { x: r.left, y: r.top, width: r.width, height: r.height }, scale: OUTPUT_WIDTH_PX / r.width });
           if (bar) bar.style.visibility = "";
           timings.capture += performance.now() - t;
