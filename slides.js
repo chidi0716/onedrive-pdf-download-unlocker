@@ -57,6 +57,24 @@
   // text rather than by element, since the status bar re-renders freely.
   const POSITION_RE = /(?:Slide|投影片|幻灯片|スライド)\s*(\d+)\s*(?:of|\/|／|，共|共)\s*(\d+)/i;
   function slidePosition() {
+    // Thumbnails carry aria-posinset (1-based) and a title like
+    // "Title, Slide 2 of 4": the most reliable source, language-independent
+    // for the position.
+    const thumbs = thumbnails();
+    const sel = thumbs.find((t) => t.getAttribute("aria-selected") === "true");
+    if (sel && +sel.getAttribute("aria-posinset") > 0) {
+      let total = 0;
+      for (const t of thumbs) {
+        const m = /(\d+)\D+(\d+)\s*$/.exec(t.getAttribute("title") || "");
+        if (m) { total = +m[2]; break; }
+      }
+      const fromStatus = total ? null : statusPosition();
+      return { current: +sel.getAttribute("aria-posinset"), total: total || (fromStatus && fromStatus.total) || thumbs.length };
+    }
+    return statusPosition();
+  }
+
+  function statusPosition() {
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     let node;
     while ((node = walker.nextNode())) {
@@ -157,56 +175,65 @@
     });
   }
 
-  // Bring slide `index` (0-based) on screen with trusted input. Each step
-  // re-reads where we are (the thumbnail list re-renders, so elements can't
-  // be held on to): one away from the target -> click the thumbnail after the
-  // selected one (or before it, if we overshot); otherwise PageDown / PageUp.
-  async function goToSlide(index) {
+  function thumbByNumber(n) {
+    return thumbnails().find((t) => +t.getAttribute("aria-posinset") === n) || null;
+  }
+
+  // The thumbnail list may only render the items near the viewport; scroll
+  // it proportionally so thumbnail `n` of `total` gets rendered.
+  async function revealThumb(n, total) {
+    let t = thumbByNumber(n);
+    if (t) return t;
+    const any = thumbnails()[0];
+    if (!any) return null;
+    let sc = any.parentElement;
+    while (sc && sc.scrollHeight <= sc.clientHeight + 2) sc = sc.parentElement;
+    if (!sc) return null;
+    for (let k = 0; k < 6 && !t; k++) {
+      sc.scrollTop = Math.max(0, ((n - 1) / Math.max(1, total)) * sc.scrollHeight - sc.clientHeight / 2);
+      await nextFrame();
+      await sleep(60);
+      t = thumbByNumber(n);
+      if (!t) {
+        // nudge toward it using the numbers that are rendered
+        const nums = thumbnails().map((x) => +x.getAttribute("aria-posinset")).filter(Boolean);
+        if (nums.length && n < Math.min(...nums)) sc.scrollTop -= sc.clientHeight / 2;
+        else if (nums.length && n > Math.max(...nums)) sc.scrollTop += sc.clientHeight / 2;
+        await nextFrame();
+        t = thumbByNumber(n);
+      }
+    }
+    return t;
+  }
+
+  // Bring slide `index` (0-based) on screen with a trusted click on its
+  // thumbnail (found by aria-posinset), falling back to PageDown/PageUp.
+  async function goToSlide(index, total) {
     const want = index + 1;
-    const selectedThumb = () => thumbnails().find((t) => t.getAttribute("aria-selected") === "true") || null;
     const current = () => { const p = slidePosition(); return p ? p.current : null; };
     const tries = [];
-    for (let step = 0; step < 8; step++) {
+    for (let step = 0; step < 6; step++) {
       const cur = current();
       if (cur === want) return true;
       let input = null;
-      if (want === 1 && step < 2) {
-        const first = thumbnails()[0];
-        if (first) {
-          first.scrollIntoView({ block: "start" });
+      if (step < 4) {
+        const t = await revealThumb(want, total);
+        if (t) {
+          t.scrollIntoView({ block: "nearest" });
           await nextFrame();
-          const b = thumbnails()[0].getBoundingClientRect();
+          const b = t.getBoundingClientRect();
           input = { kind: "click", x: b.left + b.width / 2, y: b.top + b.height / 2 };
-        }
-      } else if (cur !== null && Math.abs(cur - want) === 1 && step < 4) {
-        const sel = selectedThumb();
-        if (sel) {
-          sel.scrollIntoView({ block: "nearest" });
-          await nextFrame();
-          const list = thumbnails();
-          const next = list[list.indexOf(selectedThumb()) + (want > cur ? 1 : -1)];
-          if (next) {
-            next.scrollIntoView({ block: "nearest" });
-            await nextFrame();
-            const b = next.getBoundingClientRect();
-            input = { kind: "click", x: b.left + b.width / 2, y: b.top + b.height / 2 };
-          }
         }
       }
       if (!input) input = { kind: "key", key: cur !== null && cur > want ? "PageUp" : "PageDown" };
       tries.push(input.kind === "click" ? "click" : input.key);
       await send({ type: "SLIDES_INPUT", input });
       const start = performance.now();
-      while (performance.now() - start < 2000) {
-        const c = current();
-        if (c !== null && c !== cur) break;
-        await sleep(40);
-      }
+      while (performance.now() - start < 2000 && current() !== want) await sleep(40);
     }
     if (current() === want) return true;
     const p = slidePosition();
-    const sel = selectedThumb();
-    throw new Error(`could not open slide ${want} (status ${p ? p.current + "/" + p.total : "?"}, selected "${sel ? sel.getAttribute("aria-label") : "none"}", thumbs ${thumbnails().length}, tried ${tries.join(",")})`);
+    throw new Error(`could not open slide ${want} (at ${p ? p.current + "/" + p.total : "?"}, thumbs ${thumbnails().length}, tried ${tries.join(",")})`);
   }
 
   // ---- export --------------------------------------------------------------
@@ -277,7 +304,7 @@
       for (let i = 0; i < n; i++) {
         setStatus(tr("slidesProgress", { i: i + 1, n }));
         let t = performance.now();
-        await goToSlide(i);
+        await goToSlide(i, n);
         timings.nav += performance.now() - t;
         t = performance.now();
         // Watch the whole view panel, not just the slide: loading overlays
