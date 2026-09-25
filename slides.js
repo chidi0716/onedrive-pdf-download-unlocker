@@ -323,8 +323,19 @@
         pdfBtn.style.opacity = txtBtn.style.opacity = "1";
       }
     };
-    pdfBtn.addEventListener("click", () => run(true));
-    txtBtn.addEventListener("click", () => run(false));
+    // The viewer swallows clicks at the document level (capture phase), so a
+    // listener on the button never fires. Catch them on window first.
+    const onPress = (e) => {
+      const path = e.composedPath();
+      const hit = path.includes(pdfBtn) ? true : path.includes(txtBtn) ? false : null;
+      if (hit === null) return;
+      e.stopPropagation();
+      e.preventDefault();
+      if (e.type === "click") run(hit);
+    };
+    for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
+      window.addEventListener(type, onPress, true);
+    }
   }
 
   function start() {
