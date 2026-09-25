@@ -211,13 +211,35 @@
     });
   }
 
+  const sameRect = (a, b) => !!a && !!b && ["left", "top", "width", "height"].every((p) => Math.abs(a[p] - b[p]) < 0.5);
+
+  // Wait until the slide hasn't moved for `quietMs` (the viewer shifts its
+  // layout a few seconds after opening, when the real header replaces the
+  // loading skeleton). Gives up after `maxMs`.
+  async function waitLayoutQuiet(quietMs, maxMs) {
+    const start = performance.now();
+    let last = null;
+    let since = performance.now();
+    while (performance.now() - start < maxMs) {
+      const box = currentSlideBox();
+      const r = box && box.rect;
+      if (!sameRect(r, last)) {
+        last = r;
+        since = performance.now();
+      } else if (r && performance.now() - since >= quietMs) {
+        return;
+      }
+      await sleep(100);
+    }
+  }
+
   // The slide box once its position has stopped moving (layout can shift,
   // e.g. when Chrome shows the "is debugging" bar).
   async function settledSlideBox() {
     let prev = null;
-    for (let k = 0; k < 15; k++) {
+    for (let k = 0; k < 30; k++) {
       const box = currentSlideBox();
-      if (box && prev && ["left", "top", "width", "height"].every((p) => Math.abs(box.rect[p] - prev[p]) < 0.5)) return box;
+      if (box && prev && sameRect(box.rect, prev)) return box;
       prev = box && box.rect;
       await sleep(100);
     }
@@ -352,6 +374,7 @@
     // viewer re-layout before the first slide.
     await sleep(400);
     await waitForStable(viewPanel(), 300, 3000);
+    await waitLayoutQuiet(1500, 10000);
     try {
       if (withImages) hideHints(true);
       for (let i = 0; i < n; i++) {
@@ -366,19 +389,25 @@
         timings.render += performance.now() - t;
         texts.push(`--- Slide ${i + 1} ---\n${slideTextFrom(wrapperFor(i))}`);
         if (withImages) {
-          const box = currentSlideBox();
-          if (!box) throw new Error("slide " + (i + 1) + " not found on screen");
           // park the mouse outside the slide so no hover tooltip is captured
           const pb = viewPanel().getBoundingClientRect();
           await send({ type: "SLIDES_INPUT", input: { kind: "move", x: pb.right - 4, y: pb.bottom - 4 } });
           if (bar) bar.style.visibility = "hidden";
-          await nextFrame();
+          let res = null;
           t = performance.now();
-          const r = (await settledSlideBox()).rect;
-          const res = await send({ type: "SLIDES_CAPTURE", rect: { x: r.left, y: r.top, width: r.width, height: r.height }, scale: OUTPUT_WIDTH_PX / r.width });
-          if (bar) bar.style.visibility = "";
+          // Re-measure after capturing: if the layout moved meanwhile, the
+          // capture is off, so take it again.
+          for (let attempt = 0; attempt < 3; attempt++) {
+            const box = await settledSlideBox();
+            if (!box) throw new Error("slide " + (i + 1) + " not found on screen");
+            const r = box.rect;
+            res = await send({ type: "SLIDES_CAPTURE", rect: { x: r.left, y: r.top, width: r.width, height: r.height }, scale: OUTPUT_WIDTH_PX / r.width });
+            if (!res || !res.ok) throw new Error((res && res.error) || "capture failed");
+            const after = currentSlideBox();
+            if (after && sameRect(after.rect, r)) break;
+          }
           timings.capture += performance.now() - t;
-          if (!res || !res.ok) throw new Error((res && res.error) || "capture failed");
+          if (bar) bar.style.visibility = "";
           images.push(b64ToBytes(res.data));
         }
       }
