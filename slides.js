@@ -25,6 +25,12 @@
   const nextFrame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
 
   // ---- viewer structure --------------------------------------------------
+  // Confirmed against PowerPoint for the web (2026-09): thumbnails are
+  // role=option items with a "grid-content-thumbnail-view" class and
+  // aria-selected on the current one; every slide has a
+  // #PageContentSizeWrapperN container (only the current one has a size);
+  // empty placeholders render their "Click to add ..." prompt inside
+  // .visiblePromptTextContent; the status bar reads "Slide X of N".
 
   function viewPanel() {
     return document.getElementById("WACViewPanel");
@@ -37,15 +43,28 @@
     return !!viewPanel() && thumbnails().length > 0;
   }
 
-  // Slide thumbnails in the left pane, in slide order.
+  // Thumbnails currently in the DOM (the list may be virtualized), in order.
   function thumbnails() {
-    const pane = document.querySelector("#SlidePanel, [id*=SlidePanel], [id*=ThumbnailPane], [aria-label*=humbnail]");
-    const scope = pane || document;
-    let items = [...scope.querySelectorAll('[role="option"], [role="tab"], [role="listitem"]')].filter((el) => {
-      const b = el.getBoundingClientRect();
-      return b.width > 60 && b.height > 30;
-    });
-    return items;
+    let items = [...document.querySelectorAll('[role="option"][class*="thumbnail"]')];
+    if (!items.length) items = [...document.querySelectorAll('[role="option"][aria-label^="Slide"]')];
+    return items.filter((el) => el.getBoundingClientRect().width > 0);
+  }
+
+  // {current, total} from the status bar ("Slide 3 of 50"), or null.
+  function slidePosition() {
+    const re = /(\d+)\s*(?:of|\/|／|之|，共)\s*(\d+)/i;
+    for (const el of document.querySelectorAll("[id*=Status] *, [class*=Status] *, [class*=status] *")) {
+      if (el.childElementCount) continue;
+      const m = re.exec((el.textContent || "").trim());
+      if (m && /slide|投影片|幻灯片|スライド/i.test(el.textContent + (el.getAttribute("aria-label") || "") + (el.parentElement ? el.parentElement.textContent : ""))) {
+        return { current: +m[1], total: +m[2] };
+      }
+    }
+    return null;
+  }
+
+  function wrapperFor(index) {
+    return document.getElementById("PageContentSizeWrapper" + index);
   }
 
   // The white slide page currently shown in the editing area.
@@ -66,45 +85,30 @@
     return best;
   }
 
-  function slideText(box) {
-    if (!box) return "";
-    const r = box.rect;
+  // Text of one slide, read from its container (works even when the slide
+  // is not the one on screen).
+  function slideTextFrom(root) {
+    if (!root) return "";
     const lines = [];
-    for (const p of box.el.ownerDocument.querySelectorAll("#WACViewPanel .Paragraph, #WACViewPanel p")) {
-      const b = p.getBoundingClientRect();
-      if (b.width === 0 || b.bottom < r.top || b.top > r.bottom || b.right < r.left || b.left > r.right) continue;
-      if (p.closest("[data-odpdf-hint]")) continue;
-      const t = (p.innerText || p.textContent || "").replace(/​/g, "").trim();
-      if (t && !isHintText(p)) lines.push(t);
+    for (const p of root.querySelectorAll(".Paragraph")) {
+      if (p.closest(".visiblePromptTextContent")) continue;
+      const t = (p.textContent || "").replace(/​/g, "").trim();
+      if (t && t !== "•") lines.push(t);
     }
     return lines.join("\n");
   }
 
-  // "Click to add title/subtitle/text" prompts shown for empty placeholders.
-  function isHintText(el) {
-    return /^(Click to add|Click to edit|按一下以新增|按一下以編輯|單擊此處添加)/i.test((el.textContent || "").trim());
-  }
-
+  // Hide the "Click to add ..." prompts and empty-placeholder chrome while
+  // capturing, so they don't end up in the PDF.
   function hideHints(on) {
-    const panel = viewPanel();
-    if (!panel) return;
-    for (const el of panel.querySelectorAll("*")) {
-      if (el.childElementCount === 0 && isHintText(el)) {
-        // hide the whole placeholder box (text + dotted outline)
-        const box = el.closest('[class*="Shape"], [class*="shape"]') || el;
-        if (on) {
-          if (!box.hasAttribute("data-odpdf-hint")) {
-            box.setAttribute("data-odpdf-hint", box.style.visibility || "");
-            box.style.visibility = "hidden";
-          }
-        }
-      }
-    }
-    if (!on) {
-      for (const box of panel.querySelectorAll("[data-odpdf-hint]")) {
-        box.style.visibility = box.getAttribute("data-odpdf-hint");
-        box.removeAttribute("data-odpdf-hint");
-      }
+    let st = document.getElementById("__odpdf_hide_hints");
+    if (on && !st) {
+      st = document.createElement("style");
+      st.id = "__odpdf_hide_hints";
+      st.textContent = ".visiblePromptTextContent, .visiblePromptTextContent * { visibility: hidden !important; }";
+      document.head.appendChild(st);
+    } else if (!on && st) {
+      st.remove();
     }
   }
 
@@ -140,24 +144,44 @@
     });
   }
 
-  function signature(box) {
-    return box ? (box.el.innerText || "").slice(0, 400) + "|" + box.el.querySelectorAll("*").length : "";
-  }
+  // Bring slide `index` (0-based) on screen using trusted input: click its
+  // thumbnail when it's in the DOM, otherwise PageDown from the slide area.
+  async function goToSlide(index) {
+    const want = index + 1;
+    const pos = () => slidePosition();
+    const reached = () => { const p = pos(); return p ? p.current === want : false; };
+    if (reached()) return true;
 
-  async function goToSlide(i, thumbs, prevSig) {
-    const t = thumbs[i];
-    t.scrollIntoView({ block: "nearest" });
-    t.click();
-    // wait for the main view to switch (or give up quietly after 3 s)
-    const start = performance.now();
-    while (performance.now() - start < 3000) {
-      await nextFrame();
-      const sel = t.getAttribute("aria-selected");
-      const box = currentSlideBox();
-      if ((sel === "true" || i === 0 || signature(box) !== prevSig) && box) return box;
-      await sleep(50);
+    for (let attempt = 0; attempt < 3 && !reached(); attempt++) {
+      const thumbs = thumbnails();
+      const p = pos();
+      let target = null;
+      if (index === 0) {
+        // jump to the top of the (possibly virtualized) list first
+        if (thumbs[0]) thumbs[0].scrollIntoView({ block: "start" });
+        await nextFrame();
+        target = thumbnails()[0];
+      } else if (p) {
+        const sel = thumbs.find((t) => t.getAttribute("aria-selected") === "true");
+        if (sel && p.current === want - 1) {
+          sel.scrollIntoView({ block: "nearest" });
+          await nextFrame();
+          const list = thumbnails();
+          target = list[list.indexOf(list.find((t) => t.getAttribute("aria-selected") === "true")) + 1] || null;
+          if (target) target.scrollIntoView({ block: "nearest" });
+          await nextFrame();
+        }
+      }
+      if (target) {
+        const b = target.getBoundingClientRect();
+        await send({ type: "SLIDES_INPUT", input: { kind: "click", x: b.left + b.width / 2, y: b.top + b.height / 2 } });
+      } else {
+        await send({ type: "SLIDES_INPUT", input: { kind: "key", key: "PageDown" } });
+      }
+      const start = performance.now();
+      while (performance.now() - start < 3000 && !reached()) await sleep(40);
     }
-    return currentSlideBox();
+    return reached();
   }
 
   // ---- export --------------------------------------------------------------
@@ -196,36 +220,43 @@
 
   async function exportSlides(withImages, setStatus) {
     const t0 = performance.now();
-    const thumbs = thumbnails();
-    const n = thumbs.length;
+    const p0 = slidePosition();
+    const n = p0 ? p0.total : thumbnails().length;
     if (!n) throw new Error("no slides found");
     const texts = [];
     const images = [];
     const timings = { nav: 0, render: 0, capture: 0 };
 
-    if (withImages) {
-      const r = await send({ type: "SLIDES_BEGIN" });
-      if (!r || !r.ok) throw new Error((r && r.error) || "could not start capture");
+    // Text-only fast path: every slide already has a container in the DOM.
+    if (!withImages) {
+      let all = true;
+      for (let i = 0; i < n; i++) if (!wrapperFor(i)) { all = false; break; }
+      if (all) {
+        for (let i = 0; i < n; i++) texts.push(`--- Slide ${i + 1} ---\n${slideTextFrom(wrapperFor(i))}`);
+        saveBlob(new Blob([texts.join("\n\n") + "\n"], { type: "text/plain;charset=utf-8" }), fileBase() + ".txt");
+        return { n, secs: ((performance.now() - t0) / 1000).toFixed(1) };
+      }
     }
-    let sig = "";
+
+    const begin = await send({ type: "SLIDES_BEGIN" });
+    if (!begin || !begin.ok) throw new Error((begin && begin.error) || "could not start capture");
     try {
+      if (withImages) hideHints(true);
       for (let i = 0; i < n; i++) {
         setStatus(tr("slidesProgress", { i: i + 1, n }));
         let t = performance.now();
-        const box = await goToSlide(i, thumbs, sig);
+        if (!(await goToSlide(i))) throw new Error("could not open slide " + (i + 1));
         timings.nav += performance.now() - t;
-        if (!box) throw new Error("slide " + (i + 1) + " not found");
         t = performance.now();
-        await waitForStable(box.el, 250, 8000);
-        hideHints(true);
-        await nextFrame();
+        const wrap = wrapperFor(i) || viewPanel();
+        await waitForStable(wrap, 250, 8000);
         timings.render += performance.now() - t;
-        const fresh = currentSlideBox() || box;
-        sig = signature(fresh);
-        texts.push(`--- Slide ${i + 1} ---\n${slideText(fresh)}`);
+        texts.push(`--- Slide ${i + 1} ---\n${slideTextFrom(wrapperFor(i))}`);
         if (withImages) {
+          const box = currentSlideBox();
+          if (!box) throw new Error("slide " + (i + 1) + " not found on screen");
           t = performance.now();
-          const r = fresh.rect;
+          const r = box.rect;
           const res = await send({ type: "SLIDES_CAPTURE", rect: { x: r.left, y: r.top, width: r.width, height: r.height }, scale: 2 });
           timings.capture += performance.now() - t;
           if (!res || !res.ok) throw new Error((res && res.error) || "capture failed");
@@ -234,7 +265,7 @@
       }
     } finally {
       hideHints(false);
-      if (withImages) await send({ type: "SLIDES_END" });
+      await send({ type: "SLIDES_END" });
     }
 
     const base = fileBase();
@@ -244,7 +275,7 @@
     }
     saveBlob(new Blob([texts.join("\n\n") + "\n"], { type: "text/plain;charset=utf-8" }), base + ".txt");
     const secs = ((performance.now() - t0) / 1000).toFixed(1);
-    console.log("[odpdf] slide export", { slides: n, secs, timingsMs: Object.fromEntries(Object.entries(timings).map(([k, v]) => [k, Math.round(v)])) });
+    console.log("[odpdf] slide export", JSON.stringify({ slides: n, secs, timingsMs: Object.fromEntries(Object.entries(timings).map(([k, v]) => [k, Math.round(v)])) }));
     return { n, secs };
   }
 

@@ -428,20 +428,23 @@ async function beginSlideExport(tabId, frameId, frameUrl) {
   }
   let offset = { x: 0, y: 0 };
   if (frameId !== 0) {
-    // Find the iframe hosting the viewer by matching its origin.
+    // Find the iframe hosting the viewer. SharePoint names it
+    // "WacFrame_PowerPoint_N" and its src is a sharepoint.com URL that then
+    // posts over to officeapps, so the origin rarely matches; fall back to
+    // the largest visible iframe.
     const origin = new URL(frameUrl).origin;
     const expr = `(() => {
-      for (const f of document.querySelectorAll("iframe")) {
-        let src = "";
-        try { src = new URL(f.src, location.href).origin; } catch (e) {}
-        if (src === ${JSON.stringify(origin)}) {
-          const b = f.getBoundingClientRect();
-          const cs = getComputedStyle(f);
-          return { x: b.x + parseFloat(cs.borderLeftWidth) + parseFloat(cs.paddingLeft),
-                   y: b.y + parseFloat(cs.borderTopWidth) + parseFloat(cs.paddingTop) };
-        }
-      }
-      return null;
+      const frames = [...document.querySelectorAll("iframe")];
+      const pick =
+        frames.find((f) => { try { return new URL(f.src, location.href).origin === ${JSON.stringify(origin)}; } catch (e) { return false; } }) ||
+        frames.find((f) => /^WacFrame_/i.test(f.id || f.name || "")) ||
+        frames.map((f) => [f, f.getBoundingClientRect()]).filter(([, b]) => b.width > 0 && b.height > 0)
+          .sort((a, b) => b[1].width * b[1].height - a[1].width * a[1].height).map(([f]) => f)[0];
+      if (!pick) return null;
+      const b = pick.getBoundingClientRect();
+      const cs = getComputedStyle(pick);
+      return { x: b.x + parseFloat(cs.borderLeftWidth) + parseFloat(cs.paddingLeft),
+               y: b.y + parseFloat(cs.borderTopWidth) + parseFloat(cs.paddingTop) };
     })()`;
     const res = await cdp(tabId, "Runtime.evaluate", { expression: expr, returnByValue: true });
     if (!res || !res.result || !res.result.value) throw new Error("viewer iframe not found in page");
@@ -461,6 +464,29 @@ async function captureSlide(tabId, rect, scale) {
     clip: { x: st.offset.x + rect.x, y: st.offset.y + rect.y, width: rect.width, height: rect.height, scale: scale || 2 },
   });
   return res.data; // base64 JPEG
+}
+
+// Trusted input for navigating the viewer: a real click on a thumbnail or a
+// PageDown key press (synthetic DOM events from the content script are
+// ignored by parts of the viewer). Coordinates are frame-relative.
+const KEY_CODES = { PageDown: 34, PageUp: 33, Home: 36, End: 35, ArrowDown: 40, ArrowUp: 38 };
+
+async function slideInput(tabId, input) {
+  const st = slideExportByTab[tabId];
+  if (!st) throw new Error("export not started");
+  if (input.kind === "click") {
+    const x = st.offset.x + input.x;
+    const y = st.offset.y + input.y;
+    await cdp(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
+    await cdp(tabId, "Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
+    await cdp(tabId, "Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+  } else if (input.kind === "key") {
+    const code = KEY_CODES[input.key];
+    if (!code) throw new Error("unsupported key " + input.key);
+    const base = { key: input.key, code: input.key, windowsVirtualKeyCode: code, nativeVirtualKeyCode: code };
+    await cdp(tabId, "Input.dispatchKeyEvent", Object.assign({ type: "rawKeyDown" }, base));
+    await cdp(tabId, "Input.dispatchKeyEvent", Object.assign({ type: "keyUp" }, base));
+  }
 }
 
 function endSlideExport(tabId) {
@@ -486,6 +512,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.type === "SLIDES_CAPTURE") {
     captureSlide(sender.tab.id, msg.rect, msg.scale)
       .then((data) => sendResponse({ ok: true, data }))
+      .catch((e) => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
+  if (msg && msg.type === "SLIDES_INPUT") {
+    slideInput(sender.tab.id, msg.input)
+      .then(() => sendResponse({ ok: true }))
       .catch((e) => sendResponse({ ok: false, error: e.message }));
     return true;
   }
