@@ -180,6 +180,29 @@
     border-top: 1px solid var(--border);
     margin-top: 4px;
   }
+  /* PowerPoint slide export */
+  #slidesBox {
+    border: 1px solid #f1c4b4;
+    background: #fff6f2;
+    border-radius: 8px;
+    padding: 10px;
+    margin-bottom: 10px;
+  }
+  #slidesBox .slides-head { font-weight: 600; color: #a33a17; margin-bottom: 6px; }
+  #slidesBox .slides-row { display: flex; gap: 6px; }
+  #slidesBox button {
+    flex: 1;
+    padding: 7px 8px;
+    border-radius: 6px;
+    border: 1px solid #c43e1c;
+    background: #c43e1c;
+    color: #fff;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  #slidesBox button.secondary { background: #fff; color: #c43e1c; }
+  #slidesBox button:disabled { opacity: 0.6; cursor: default; }
+  #slidesBox .slides-note { margin-top: 6px; font-size: 11px; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -197,6 +220,15 @@
       <summary id="helpSummary">How to use</summary>
       <ol id="helpSteps"></ol>
     </details>
+
+    <div id="slidesBox" style="display:none;">
+      <div class="slides-head" id="slidesHead"></div>
+      <div class="slides-row">
+        <button id="slidesPdf"></button>
+        <button id="slidesText" class="secondary"></button>
+      </div>
+      <div class="slides-note" id="slidesNote"></div>
+    </div>
 
     <button id="refresh"></button>
     <div id="list"></div>

@@ -51,6 +51,8 @@
       slidesDone: "Done: {n} slides in {s}s",
       slidesTextDone: "Text saved: {n} slides in {s}s",
       slidesFailed: "Export failed: ",
+      slidesPopupHeading: "PowerPoint slides detected ({n} slides)",
+      slidesStarted: "Export started. Progress is shown at the bottom-left of the slide viewer; files go to your Downloads folder.",
       slidesDebuggerNote: "Chrome will show an “is debugging this browser” bar while exporting. That's expected — it's how the extension captures slides at high resolution.",
     },
     "zh-Hant": {
@@ -95,6 +97,8 @@
       slidesDone: "完成：{n} 張，耗時 {s} 秒",
       slidesTextDone: "文字已儲存：{n} 張，耗時 {s} 秒",
       slidesFailed: "匯出失敗：",
+      slidesPopupHeading: "偵測到 PowerPoint 投影片（共 {n} 張）",
+      slidesStarted: "已開始匯出。進度顯示在投影片檢視器左下角，檔案會存到「下載」資料夾。",
       slidesDebuggerNote: "匯出時 Chrome 上方會出現「正在對這個瀏覽器進行偵錯」的提示列，這是正常的，擴充功能靠它來高解析度擷取投影片。",
     },
   };

@@ -304,10 +304,41 @@ async function render(tab, candidates) {
   }
 }
 
+// PowerPoint for the web: ask the viewer frame (slides.js) whether it's
+// ready, and if so offer the slide export. The export itself runs in the
+// page; this popup only starts it.
+function checkSlides(tab) {
+  const box = document.getElementById("slidesBox");
+  chrome.tabs.sendMessage(tab.id, { type: "SLIDES_PING" }, (resp) => {
+    void chrome.runtime.lastError;
+    if (!resp || !resp.ok) {
+      box.style.display = "none";
+      return;
+    }
+    box.style.display = "block";
+    document.getElementById("slidesHead").textContent = tr("slidesPopupHeading").replace("{n}", resp.total || "?");
+    document.getElementById("slidesNote").textContent = resp.busy ? tr("slidesStarted") : tr("slidesDebuggerNote");
+    for (const id of ["slidesPdf", "slidesText"]) document.getElementById(id).disabled = !!resp.busy;
+  });
+}
+
+function startSlides(withImages) {
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const tab = tabs[0];
+    if (!tab) return;
+    chrome.tabs.sendMessage(tab.id, { type: "SLIDES_RUN", withImages }, () => {
+      void chrome.runtime.lastError;
+      document.getElementById("slidesNote").textContent = tr("slidesStarted");
+      for (const id of ["slidesPdf", "slidesText"]) document.getElementById(id).disabled = true;
+    });
+  });
+}
+
 function refresh() {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const tab = tabs[0];
     if (!tab) return;
+    checkSlides(tab);
     chrome.runtime.sendMessage(
       { type: "GET_CANDIDATES", tabId: tab.id },
       (resp) => {
@@ -331,6 +362,10 @@ function applyStaticI18n() {
     stepsEl.appendChild(li);
   }
   document.getElementById("refresh").textContent = tr("refreshBtn");
+  document.getElementById("slidesPdf").textContent = "⬇ " + tr("slidesExportPdf");
+  document.getElementById("slidesPdf").title = tr("slidesExportTitle");
+  document.getElementById("slidesText").textContent = tr("slidesExportText");
+  document.getElementById("slidesText").title = tr("slidesTextTitle");
   document.getElementById("emptyText").innerHTML = tr("emptyText");
   document.getElementById("footerText").textContent = tr("footerText");
   document.getElementById("langSelect").value = LANG;
@@ -354,4 +389,6 @@ function initLang() {
 }
 
 document.getElementById("refresh").addEventListener("click", refresh);
+document.getElementById("slidesPdf").addEventListener("click", () => startSlides(true));
+document.getElementById("slidesText").addEventListener("click", () => startSlides(false));
 initLang();

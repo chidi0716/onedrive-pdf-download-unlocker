@@ -284,69 +284,60 @@
 
   // ---- UI ------------------------------------------------------------------
 
+  // The export is started from the extension popup: the viewer grabs pointer
+  // events for itself, so buttons injected into it never receive clicks. A
+  // small bar in the viewer shows progress and the result.
   let bar = null;
-  function buildUi() {
-    if (bar) return;
-    bar = document.createElement("div");
-    bar.id = "__odpdf_slides";
-    bar.style.cssText =
-      "position:fixed;left:12px;bottom:40px;z-index:2147483647;display:flex;gap:6px;align-items:center;" +
-      "font:13px/1.2 Segoe UI,system-ui,sans-serif;background:rgba(32,32,32,.92);color:#fff;padding:6px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.3)";
-    const mk = (label, title) => {
-      const b = document.createElement("button");
-      b.textContent = label;
-      b.title = title;
-      b.style.cssText = "all:unset;cursor:pointer;padding:6px 10px;border-radius:6px;background:#c43e1c;color:#fff;font-weight:600";
-      return b;
-    };
-    const pdfBtn = mk("⬇ " + tr("slidesExportPdf"), tr("slidesExportTitle") + "\n\n" + tr("slidesDebuggerNote"));
-    const txtBtn = mk(tr("slidesExportText"), tr("slidesTextTitle"));
-    txtBtn.style.background = "#555";
-    const status = document.createElement("span");
-    // Mirror the status line onto the document so it can be read from
-    // DevTools (or a test) without finding our UI.
-    new MutationObserver(() => document.documentElement.setAttribute("data-odpdf-status", status.textContent)).observe(status, { childList: true, characterData: true, subtree: true });
-    status.style.cssText = "padding:0 6px;white-space:nowrap";
-    bar.append(pdfBtn, txtBtn, status);
-    document.body.appendChild(bar);
+  let statusEl = null;
+  function setStatus(text) {
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.id = "__odpdf_slides";
+      bar.style.cssText =
+        "position:fixed;left:12px;bottom:40px;z-index:2147483647;pointer-events:none;" +
+        "font:13px/1.3 Segoe UI,system-ui,sans-serif;background:rgba(32,32,32,.92);color:#fff;padding:8px 12px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.3)";
+      statusEl = document.createElement("span");
+      bar.appendChild(statusEl);
+      document.body.appendChild(bar);
+    }
+    statusEl.textContent = text;
+    // Also readable from DevTools when troubleshooting.
+    document.documentElement.setAttribute("data-odpdf-status", text);
+  }
 
-    let busy = false;
-    const run = async (withImages) => {
-      if (busy) return;
-      busy = true;
-      pdfBtn.style.opacity = txtBtn.style.opacity = ".5";
-      status.textContent = tr("slidesPreparing");
-      try {
-        const { n, secs } = await exportSlides(withImages, (s) => (status.textContent = s));
-        status.textContent = tr(withImages ? "slidesDone" : "slidesTextDone", { n, s: secs });
-      } catch (e) {
-        status.textContent = tr("slidesFailed") + (e && e.message ? e.message : e);
-      } finally {
-        busy = false;
-        pdfBtn.style.opacity = txtBtn.style.opacity = "1";
-      }
-    };
-    // The viewer swallows clicks at the document level (capture phase), so a
-    // listener on the button never fires. Catch them on window first.
-    const onPress = (e) => {
-      const path = e.composedPath();
-      const hit = path.includes(pdfBtn) ? true : path.includes(txtBtn) ? false : null;
-      if (hit === null) return;
-      e.stopPropagation();
-      e.preventDefault();
-      if (e.type === "click") run(hit);
-    };
-    for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
-      window.addEventListener(type, onPress, true);
+  let busy = false;
+  async function run(withImages) {
+    if (busy) return;
+    busy = true;
+    setStatus(tr("slidesPreparing"));
+    try {
+      const { n, secs } = await exportSlides(withImages, setStatus);
+      setStatus(tr(withImages ? "slidesDone" : "slidesTextDone", { n, s: secs }));
+    } catch (e) {
+      setStatus(tr("slidesFailed") + (e && e.message ? e.message : e));
+    } finally {
+      busy = false;
     }
   }
+
+  let ready = false;
+  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (!msg || !ready) return; // only the ready viewer frame answers
+    if (msg.type === "SLIDES_PING") {
+      const p = slidePosition();
+      sendResponse({ ok: true, total: p ? p.total : thumbnails().length, busy });
+    } else if (msg.type === "SLIDES_RUN") {
+      sendResponse({ ok: true, started: !busy });
+      run(!!msg.withImages);
+    }
+  });
 
   function start() {
     const poll = setInterval(() => {
       if (viewerReady()) {
         clearInterval(poll);
+        ready = true;
         document.documentElement.setAttribute("data-odpdf-slides", "ready");
-        buildUi();
       }
     }, 1000);
   }
