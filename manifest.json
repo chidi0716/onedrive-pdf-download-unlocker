@@ -9,7 +9,8 @@
     "downloads",
     "activeTab",
     "storage",
-    "scripting"
+    "scripting",
+    "debugger"
   ],
   "host_permissions": [
     "*://*.sharepoint.com/*",
@@ -53,6 +54,18 @@
         "i18n.js",
         "content.js"
       ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://*.officeapps.live.com/*"
+      ],
+      "js": [
+        "i18n.js",
+        "slidepdf.js",
+        "slides.js"
+      ],
+      "all_frames": true,
       "run_at": "document_idle"
     }
   ]

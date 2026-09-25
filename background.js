@@ -390,7 +390,110 @@ async function handleDownload(msg) {
   }
 }
 
+// ---- Slide export (PowerPoint for the web) ----
+// slides.js runs inside the PowerPoint viewer frame, walks the slides and asks
+// us to capture each one. chrome.tabs.captureVisibleTab is limited to screen
+// resolution, so we use the DevTools protocol instead: Page.captureScreenshot
+// with a clip scale re-renders the slide at 2x, keeping text sharp. The viewer
+// usually lives in a cross-origin iframe inside the SharePoint page, so the
+// slide rect it reports is frame-relative; we add the iframe's offset in the
+// top page (looked up once per export) before capturing.
+const slideExportByTab = {}; // { [tabId]: { offset: {x, y} } }
+
+function cdp(tabId, method, params) {
+  return new Promise((resolve, reject) => {
+    chrome.debugger.sendCommand({ tabId }, method, params || {}, (res) => {
+      const err = chrome.runtime.lastError;
+      if (err) reject(new Error(err.message));
+      else resolve(res);
+    });
+  });
+}
+
+function attachDebugger(tabId) {
+  return new Promise((resolve, reject) => {
+    chrome.debugger.attach({ tabId }, "1.3", () => {
+      const err = chrome.runtime.lastError;
+      if (err) reject(new Error(err.message));
+      else resolve();
+    });
+  });
+}
+
+async function beginSlideExport(tabId, frameId, frameUrl) {
+  if (!chrome.debugger) throw new Error("debugger API unavailable (Chrome/Edge only)");
+  if (!slideExportByTab[tabId]) {
+    await attachDebugger(tabId);
+    slideExportByTab[tabId] = { offset: { x: 0, y: 0 } };
+  }
+  let offset = { x: 0, y: 0 };
+  if (frameId !== 0) {
+    // Find the iframe hosting the viewer by matching its origin.
+    const origin = new URL(frameUrl).origin;
+    const expr = `(() => {
+      for (const f of document.querySelectorAll("iframe")) {
+        let src = "";
+        try { src = new URL(f.src, location.href).origin; } catch (e) {}
+        if (src === ${JSON.stringify(origin)}) {
+          const b = f.getBoundingClientRect();
+          const cs = getComputedStyle(f);
+          return { x: b.x + parseFloat(cs.borderLeftWidth) + parseFloat(cs.paddingLeft),
+                   y: b.y + parseFloat(cs.borderTopWidth) + parseFloat(cs.paddingTop) };
+        }
+      }
+      return null;
+    })()`;
+    const res = await cdp(tabId, "Runtime.evaluate", { expression: expr, returnByValue: true });
+    if (!res || !res.result || !res.result.value) throw new Error("viewer iframe not found in page");
+    offset = res.result.value;
+  }
+  slideExportByTab[tabId].offset = offset;
+  return offset;
+}
+
+async function captureSlide(tabId, rect, scale) {
+  const st = slideExportByTab[tabId];
+  if (!st) throw new Error("export not started");
+  const res = await cdp(tabId, "Page.captureScreenshot", {
+    format: "jpeg",
+    quality: 92,
+    captureBeyondViewport: false,
+    clip: { x: st.offset.x + rect.x, y: st.offset.y + rect.y, width: rect.width, height: rect.height, scale: scale || 2 },
+  });
+  return res.data; // base64 JPEG
+}
+
+function endSlideExport(tabId) {
+  if (!slideExportByTab[tabId]) return;
+  delete slideExportByTab[tabId];
+  chrome.debugger.detach({ tabId }, () => void chrome.runtime.lastError);
+}
+
+if (chrome.debugger && chrome.debugger.onDetach) {
+  // User dismissed the "is debugging this browser" bar, or the tab went away.
+  chrome.debugger.onDetach.addListener((source) => {
+    if (source.tabId != null) delete slideExportByTab[source.tabId];
+  });
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg && msg.type === "SLIDES_BEGIN") {
+    beginSlideExport(sender.tab.id, sender.frameId, sender.url)
+      .then((offset) => sendResponse({ ok: true, offset }))
+      .catch((e) => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
+  if (msg && msg.type === "SLIDES_CAPTURE") {
+    captureSlide(sender.tab.id, msg.rect, msg.scale)
+      .then((data) => sendResponse({ ok: true, data }))
+      .catch((e) => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
+  if (msg && msg.type === "SLIDES_END") {
+    endSlideExport(sender.tab.id);
+    sendResponse({ ok: true });
+    return;
+  }
   if (msg && msg.type === "GET_CANDIDATES") {
     // popup.js 會帶 tabId 過來；content.js 是從分頁內部送訊息，沒有帶
     // tabId，這時改用 sender.tab.id（背景能看到訊息是哪個分頁送來的）。
