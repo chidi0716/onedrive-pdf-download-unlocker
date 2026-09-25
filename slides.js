@@ -309,6 +309,7 @@
 
     let busy = false;
     const run = async (withImages) => {
+      console.log("[odpdf] DEBUG run", withImages, busy);
       if (busy) return;
       busy = true;
       pdfBtn.style.opacity = txtBtn.style.opacity = ".5";
@@ -327,6 +328,7 @@
     // listener on the button never fires. Catch them on window first.
     const onPress = (e) => {
       const path = e.composedPath();
+      console.log("[odpdf] DEBUG press", e.type, e.isTrusted, path.slice(0, 3).map((n) => n.nodeName || n).join(">"), path.includes(pdfBtn));
       const hit = path.includes(pdfBtn) ? true : path.includes(txtBtn) ? false : null;
       if (hit === null) return;
       e.stopPropagation();
