@@ -211,6 +211,37 @@
     return currentSlideBox();
   }
 
+  function thumbByNumber(n) {
+    return thumbnails().find((t) => +t.getAttribute("aria-posinset") === n) || null;
+  }
+
+  // The thumbnail list may only render the items near the viewport; scroll
+  // it proportionally so thumbnail `n` of `total` gets rendered.
+  async function revealThumb(n, total) {
+    let t = thumbByNumber(n);
+    if (t) return t;
+    const any = thumbnails()[0];
+    if (!any) return null;
+    let sc = any.parentElement;
+    while (sc && sc.scrollHeight <= sc.clientHeight + 2) sc = sc.parentElement;
+    if (!sc) return null;
+    for (let k = 0; k < 6 && !t; k++) {
+      sc.scrollTop = Math.max(0, ((n - 1) / Math.max(1, total)) * sc.scrollHeight - sc.clientHeight / 2);
+      await nextFrame();
+      await sleep(60);
+      t = thumbByNumber(n);
+      if (!t) {
+        // nudge toward it using the numbers that are rendered
+        const nums = thumbnails().map((x) => +x.getAttribute("aria-posinset")).filter(Boolean);
+        if (nums.length && n < Math.min(...nums)) sc.scrollTop -= sc.clientHeight / 2;
+        else if (nums.length && n > Math.max(...nums)) sc.scrollTop += sc.clientHeight / 2;
+        await nextFrame();
+        t = thumbByNumber(n);
+      }
+    }
+    return t;
+  }
+
   // Bring slide `index` (0-based) on screen with a trusted click on its
   // thumbnail (found by aria-posinset), falling back to PageDown/PageUp.
   async function goToSlide(index, total) {
