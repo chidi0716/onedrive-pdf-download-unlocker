@@ -2,6 +2,22 @@
 
 本專案版本紀錄遵循 [Keep a Changelog](https://keepachangelog.com/) 格式，版本號採用 [Semantic Versioning](https://semver.org/)。
 
+## [1.2.0-beta.1] - 2026-09-25
+
+> 測試版（僅 Chrome / Edge）。PowerPoint 投影片匯出為新功能，尚在實機測試中。
+
+### 新增
+
+- **PowerPoint 投影片匯出（Chrome / Edge）**：在 PowerPoint 網頁版開啟的簡報（包含「只能檢視、封鎖下載」的連結），可從擴充功能彈出視窗點「匯出投影片（PDF）」，逐張擷取投影片（固定 2000 px 寬、16:9 頁面）存成一份圖片式 PDF，並另存每張投影片的文字檔；或只點「文字」快速匯出文字。
+  - 以 Chrome debugger API 擷取，匯出期間 Chrome 會顯示「正在對這個瀏覽器進行偵錯」提示列，因此新增 `debugger` 權限。
+  - 匯出時會隱藏「按一下以新增…」提示字與空白預留位置的虛線框。
+
+### 已知限制
+
+- 未填文字的 SmartArt 會顯示「[文字]」提示（PowerPoint 網頁版把 SmartArt 畫成圖片，無法移除），且 SmartArt 偶爾在擷取時尚未繪製完成。
+- 偶爾會在投影片右上角擷取到一塊白色小方塊，原因尚未確認。
+- Firefox 不支援（沒有 debugger API）。
+
 ## [1.1.0] - 2026-09-24
 
 > 由 1.1.0-rc.1 測試版（2026-09-13）轉為正式版，程式碼與測試版相同。

@@ -15,7 +15,7 @@ $dist = Join-Path $root "dist"
 $staging = Join-Path $root ".build-staging"
 
 # Runtime files shared by both browsers (everything the extension needs at run time).
-$files = @("background.js", "content.js", "i18n.js", "popup.html", "popup.js")
+$files = @("background.js", "content.js", "i18n.js", "popup.html", "popup.js", "slides.js", "slidepdf.js")
 $dirs = @("icons")
 
 function Reset-Dir($p) {
