@@ -451,14 +451,31 @@ async function beginSlideExport(tabId, frameId, frameUrl) {
     offset = res.result.value;
   }
   slideExportByTab[tabId].offset = offset;
-  // Hide our own floating download button (content.js, top page) so it
-  // doesn't end up in the captures.
-  await cdp(tabId, "Runtime.evaluate", {
-    expression: `(() => { if (document.getElementById("__odpdf_capture_hide")) return;
-      const s = document.createElement("style"); s.id = "__odpdf_capture_hide";
-      s.textContent = "#__odpdf_btn, #__odpdf_close { display: none !important; }";
-      (document.head || document.documentElement).appendChild(s); })()`,
-  }).catch(() => {});
+  // In the top page, hide everything except the viewer iframe and its
+  // ancestors, so nothing SharePoint (or our own download button) floats over
+  // the slide in the captures. The iframe fills the page, so nothing visible
+  // to the user changes.
+  if (frameId !== 0) {
+    await cdp(tabId, "Runtime.evaluate", {
+      expression: `(() => {
+        if (document.documentElement.hasAttribute("data-odpdf-isolated")) return;
+        const frames = [...document.querySelectorAll("iframe")].map((f) => [f, f.getBoundingClientRect()])
+          .filter(([, b]) => b.width > 0 && b.height > 0).sort((a, b) => b[1].width * b[1].height - a[1].width * a[1].height);
+        const keep = frames.length ? frames[0][0] : null;
+        if (!keep) return;
+        document.documentElement.setAttribute("data-odpdf-isolated", "1");
+        for (let el = keep; el && el !== document.documentElement; el = el.parentElement) {
+          for (const sib of el.parentElement ? el.parentElement.children : []) {
+            if (sib === el || sib.tagName === "SCRIPT" || sib.tagName === "STYLE" || sib.tagName === "HEAD") continue;
+            if (!sib.hasAttribute("data-odpdf-hidden")) {
+              sib.setAttribute("data-odpdf-hidden", sib.style.visibility || "");
+              sib.style.setProperty("visibility", "hidden", "important");
+            }
+          }
+        }
+      })()`,
+    }).catch(() => {});
+  }
   return offset;
 }
 
@@ -502,7 +519,13 @@ async function slideInput(tabId, input) {
 function endSlideExport(tabId) {
   if (!slideExportByTab[tabId]) return;
   cdp(tabId, "Runtime.evaluate", {
-    expression: `(() => { const s = document.getElementById("__odpdf_capture_hide"); if (s) s.remove(); })()`,
+    expression: `(() => {
+      for (const el of document.querySelectorAll("[data-odpdf-hidden]")) {
+        el.style.visibility = el.getAttribute("data-odpdf-hidden");
+        el.removeAttribute("data-odpdf-hidden");
+      }
+      document.documentElement.removeAttribute("data-odpdf-isolated");
+    })()`,
   }).catch(() => {});
   delete slideExportByTab[tabId];
   chrome.debugger.detach({ tabId }, () => void chrome.runtime.lastError);

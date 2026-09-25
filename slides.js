@@ -93,10 +93,23 @@
     return document.getElementById("PageContentSizeWrapper" + index);
   }
 
-  // The white slide page currently shown in the editing area.
+  // The slide currently shown. Each slide's container holds an <svg> exactly
+  // the size of the slide (its background); use the largest one in the
+  // visible container. Falls back to the smallest slide-shaped box.
   function currentSlideBox() {
     const panel = viewPanel();
     if (!panel) return null;
+    const wrap = [...document.querySelectorAll("[id^=PageContentSizeWrapper]")].find((w) => w.getBoundingClientRect().width > 0);
+    if (wrap) {
+      let best = null;
+      for (const svg of wrap.querySelectorAll("svg")) {
+        const b = svg.getBoundingClientRect();
+        const ratio = b.height ? b.width / b.height : 0;
+        if (b.width < 200 || ratio < 1.2 || ratio > 1.9) continue;
+        if (!best || b.width * b.height > best.rect.width * best.rect.height) best = { el: svg, rect: b };
+      }
+      if (best) return best;
+    }
     const pb = panel.getBoundingClientRect();
     let best = null;
     for (const el of panel.querySelectorAll("div")) {
