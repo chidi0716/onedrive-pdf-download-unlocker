@@ -147,44 +147,74 @@
     });
   }
 
-  // Bring slide `index` (0-based) on screen using trusted input: click its
-  // thumbnail when it's in the DOM, otherwise PageDown from the slide area.
+  // Bring slide `index` (0-based) on screen using trusted input: click the
+  // thumbnail after the selected one (the list may be virtualized, so we go
+  // by DOM neighbours, not absolute positions), falling back to keys.
+  // Reached = the status bar says so, or the clicked thumbnail is selected.
   async function goToSlide(index) {
     const want = index + 1;
-    const pos = () => slidePosition();
-    const reached = () => { const p = pos(); return p ? p.current === want : false; };
-    if (reached()) return true;
+    const selectedThumb = () => thumbnails().find((t) => t.getAttribute("aria-selected") === "true") || null;
+    let target = null;
+    const reached = () => {
+      const p = slidePosition();
+      if (p && p.current === want) return true;
+      return !!(target && target.isConnected && target.getAttribute("aria-selected") === "true");
+    };
+    if (index === 0) {
+      const first = thumbnails()[0];
+      if (first) first.scrollIntoView({ block: "start" });
+      await nextFrame();
+      const p = slidePosition();
+      if (p && p.current === 1) return true;
+    }
 
-    for (let attempt = 0; attempt < 3 && !reached(); attempt++) {
-      const thumbs = thumbnails();
-      const p = pos();
-      let target = null;
-      if (index === 0) {
-        // jump to the top of the (possibly virtualized) list first
-        if (thumbs[0]) thumbs[0].scrollIntoView({ block: "start" });
-        await nextFrame();
-        target = thumbnails()[0];
-      } else if (p) {
-        const sel = thumbs.find((t) => t.getAttribute("aria-selected") === "true");
-        if (sel && p.current === want - 1) {
-          sel.scrollIntoView({ block: "nearest" });
-          await nextFrame();
-          const list = thumbnails();
-          target = list[list.indexOf(list.find((t) => t.getAttribute("aria-selected") === "true")) + 1] || null;
-          if (target) target.scrollIntoView({ block: "nearest" });
-          await nextFrame();
+    const tries = [];
+    for (let attempt = 0; attempt < 4 && !reached(); attempt++) {
+      let input;
+      if (attempt < 2) {
+        if (index === 0) {
+          target = thumbnails()[0] || null;
+        } else {
+          const sel = selectedThumb();
+          if (sel) {
+            sel.scrollIntoView({ block: "nearest" });
+            await nextFrame();
+            const list = thumbnails();
+            const cur = selectedThumb();
+            target = cur ? list[list.indexOf(cur) + 1] || null : null;
+            if (target) target.scrollIntoView({ block: "nearest" });
+            await nextFrame();
+          } else {
+            target = null;
+          }
         }
+      } else {
+        target = null;
       }
       if (target) {
         const b = target.getBoundingClientRect();
-        await send({ type: "SLIDES_INPUT", input: { kind: "click", x: b.left + b.width / 2, y: b.top + b.height / 2 } });
+        input = { kind: "click", x: b.left + b.width / 2, y: b.top + b.height / 2 };
       } else {
-        await send({ type: "SLIDES_INPUT", input: { kind: "key", key: "PageDown" } });
+        input = { kind: "key", key: attempt === 3 ? "PageDown" : "ArrowDown" };
       }
+      tries.push(input.kind === "click" ? "click" : input.key);
+      await send({ type: "SLIDES_INPUT", input });
       const start = performance.now();
-      while (performance.now() - start < 3000 && !reached()) await sleep(40);
+      while (performance.now() - start < 2500 && !reached()) await sleep(40);
     }
-    return reached();
+    if (reached()) {
+      // give the status bar a moment to catch up so the next step sees it
+      const start = performance.now();
+      while (performance.now() - start < 1000) {
+        const p = slidePosition();
+        if (!p || p.current === want) break;
+        await sleep(40);
+      }
+      return true;
+    }
+    const p = slidePosition();
+    const sel = selectedThumb();
+    throw new Error(`could not open slide ${want} (status ${p ? p.current + "/" + p.total : "?"}, selected "${sel ? sel.getAttribute("aria-label") : "none"}", thumbs ${thumbnails().length}, tried ${tries.join(",")})`);
   }
 
   // ---- export --------------------------------------------------------------
@@ -248,7 +278,7 @@
       for (let i = 0; i < n; i++) {
         setStatus(tr("slidesProgress", { i: i + 1, n }));
         let t = performance.now();
-        if (!(await goToSlide(i))) throw new Error("could not open slide " + (i + 1));
+        await goToSlide(i);
         timings.nav += performance.now() - t;
         t = performance.now();
         const wrap = wrapperFor(i) || viewPanel();
