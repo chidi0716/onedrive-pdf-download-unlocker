@@ -121,7 +121,18 @@
       // smallest qualifying box = the page itself, not its wrappers
       if (!best || b.width * b.height < best.rect.width * best.rect.height) best = { el, rect: b };
     }
-    return best;
+    if (best) return best;
+    // Last resort: derive a 16:9 slide rect centered in the visible wrapper
+    // (or the view panel), so a slide that renders without a detectable
+    // background box can still be captured.
+    const host = wrap || panel;
+    const hb = host.getBoundingClientRect();
+    if (hb.width > 200 && hb.height > 120) {
+      let w = hb.width, h = w * 9 / 16;
+      if (h > hb.height) { h = hb.height; w = h * 16 / 9; }
+      return { el: host, rect: { left: hb.left + (hb.width - w) / 2, top: hb.top + (hb.height - h) / 2, width: w, height: h, right: 0, bottom: 0 } };
+    }
+    return null;
   }
 
   // Text of one slide, read from its container (works even when the slide
