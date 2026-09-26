@@ -343,25 +343,32 @@
       const s = performance.now();
       while (performance.now() - s < 4000 && !arrived()) await sleep(60);
     }
-    // Strategy B: step one slide at a time with the keyboard. Focus the
-    // thumbnail list first by clicking the currently-selected (always visible)
-    // thumbnail — that doesn't change slide but makes Arrow keys work.
+    // Strategy B: step one slide at a time with PageDown/PageUp on the main
+    // slide area (the viewer's standard navigation). Focus it by clicking the
+    // current slide's center first — that doesn't change the slide.
     for (let step = 0; step < total + 4 && !arrived(); step++) {
       const cur = current();
       if (cur == null) break;
-      const sel = thumbByNumber(cur) || thumbnails().find((x) => x.getAttribute("aria-selected") === "true");
-      if (sel) {
-        await ensureThumbVisible(sel);
-        const b = sel.getBoundingClientRect();
-        if (b.width > 4 && b.top >= 0 && b.bottom <= window.innerHeight) {
-          await send({ type: "SLIDES_INPUT", input: { kind: "click", x: b.left + b.width / 2, y: b.top + b.height / 2 } });
-        }
+      const box = currentSlideBox();
+      if (box) {
+        const r = box.rect;
+        await send({ type: "SLIDES_INPUT", input: { kind: "click", x: r.left + r.width / 2, y: r.top + r.height / 2 } });
+        await sleep(80);
       }
-      const key = cur > want ? "ArrowUp" : "ArrowDown";
+      const key = cur > want ? "PageUp" : "PageDown";
       tries.push(key);
       await send({ type: "SLIDES_INPUT", input: { kind: "key", key } });
       const s = performance.now();
       while (performance.now() - s < 4000 && current() === cur && !arrived()) await sleep(60);
+      // if PageDown on the slide didn't move it, fall back to an arrow key on
+      // the thumbnail list for this step
+      if (current() === cur) {
+        const sel = thumbByNumber(cur);
+        if (sel) { await ensureThumbVisible(sel); const b = sel.getBoundingClientRect(); if (b.width > 4 && b.top >= 0 && b.bottom <= window.innerHeight) await send({ type: "SLIDES_INPUT", input: { kind: "click", x: b.left + b.width / 2, y: b.top + b.height / 2 } }); }
+        await send({ type: "SLIDES_INPUT", input: { kind: "key", key: cur > want ? "ArrowUp" : "ArrowDown" } });
+        const s2 = performance.now();
+        while (performance.now() - s2 < 3000 && current() === cur && !arrived()) await sleep(60);
+      }
     }
     if (arrived()) return true;
     const p = slidePosition();
