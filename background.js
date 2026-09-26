@@ -420,36 +420,41 @@ function attachDebugger(tabId) {
   });
 }
 
+// Current position of the viewer iframe in the top page. Recomputed fresh
+// before every click/capture: the layout shifts after the export starts (the
+// "is debugging" infobar appears, the thumbnail pane scrolls), so a value
+// cached once at BEGIN goes stale and clicks land in the wrong place.
+async function computeOffset(tabId) {
+  const st = slideExportByTab[tabId];
+  if (!st || st.frameId === 0) return { x: 0, y: 0 };
+  const origin = new URL(st.frameUrl).origin;
+  const expr = `(() => {
+    const frames = [...document.querySelectorAll("iframe")];
+    const pick =
+      frames.find((f) => { try { return new URL(f.src, location.href).origin === ${JSON.stringify(origin)}; } catch (e) { return false; } }) ||
+      frames.find((f) => /^WacFrame_/i.test(f.id || f.name || "")) ||
+      frames.map((f) => [f, f.getBoundingClientRect()]).filter(([, b]) => b.width > 0 && b.height > 0)
+        .sort((a, b) => b[1].width * b[1].height - a[1].width * a[1].height).map(([f]) => f)[0];
+    if (!pick) return null;
+    const b = pick.getBoundingClientRect();
+    const cs = getComputedStyle(pick);
+    return { x: b.x + parseFloat(cs.borderLeftWidth) + parseFloat(cs.paddingLeft),
+             y: b.y + parseFloat(cs.borderTopWidth) + parseFloat(cs.paddingTop) };
+  })()`;
+  const res = await cdp(tabId, "Runtime.evaluate", { expression: expr, returnByValue: true });
+  if (!res || !res.result || !res.result.value) throw new Error("viewer iframe not found in page");
+  return res.result.value;
+}
+
 async function beginSlideExport(tabId, frameId, frameUrl) {
   if (!chrome.debugger) throw new Error("debugger API unavailable (Chrome/Edge only)");
   if (!slideExportByTab[tabId]) {
     await attachDebugger(tabId);
     slideExportByTab[tabId] = { offset: { x: 0, y: 0 } };
   }
-  let offset = { x: 0, y: 0 };
-  if (frameId !== 0) {
-    // Find the iframe hosting the viewer. SharePoint names it
-    // "WacFrame_PowerPoint_N" and its src is a sharepoint.com URL that then
-    // posts over to officeapps, so the origin rarely matches; fall back to
-    // the largest visible iframe.
-    const origin = new URL(frameUrl).origin;
-    const expr = `(() => {
-      const frames = [...document.querySelectorAll("iframe")];
-      const pick =
-        frames.find((f) => { try { return new URL(f.src, location.href).origin === ${JSON.stringify(origin)}; } catch (e) { return false; } }) ||
-        frames.find((f) => /^WacFrame_/i.test(f.id || f.name || "")) ||
-        frames.map((f) => [f, f.getBoundingClientRect()]).filter(([, b]) => b.width > 0 && b.height > 0)
-          .sort((a, b) => b[1].width * b[1].height - a[1].width * a[1].height).map(([f]) => f)[0];
-      if (!pick) return null;
-      const b = pick.getBoundingClientRect();
-      const cs = getComputedStyle(pick);
-      return { x: b.x + parseFloat(cs.borderLeftWidth) + parseFloat(cs.paddingLeft),
-               y: b.y + parseFloat(cs.borderTopWidth) + parseFloat(cs.paddingTop) };
-    })()`;
-    const res = await cdp(tabId, "Runtime.evaluate", { expression: expr, returnByValue: true });
-    if (!res || !res.result || !res.result.value) throw new Error("viewer iframe not found in page");
-    offset = res.result.value;
-  }
+  slideExportByTab[tabId].frameId = frameId;
+  slideExportByTab[tabId].frameUrl = frameUrl;
+  const offset = await computeOffset(tabId);
   slideExportByTab[tabId].offset = offset;
   // In the top page, hide everything except the viewer iframe and its
   // ancestors, so nothing SharePoint (or our own download button) floats over
@@ -482,11 +487,13 @@ async function beginSlideExport(tabId, frameId, frameUrl) {
 async function captureSlide(tabId, rect, scale) {
   const st = slideExportByTab[tabId];
   if (!st) throw new Error("export not started");
+  const offset = await computeOffset(tabId); // fresh: layout may have shifted
+  st.offset = offset;
   const res = await cdp(tabId, "Page.captureScreenshot", {
     format: "jpeg",
     quality: 92,
     captureBeyondViewport: false,
-    clip: { x: st.offset.x + rect.x, y: st.offset.y + rect.y, width: rect.width, height: rect.height, scale: scale || 2 },
+    clip: { x: offset.x + rect.x, y: offset.y + rect.y, width: rect.width, height: rect.height, scale: scale || 2 },
   });
   return res.data; // base64 JPEG
 }
@@ -499,6 +506,10 @@ const KEY_CODES = { PageDown: 34, PageUp: 33, Home: 36, End: 35, ArrowDown: 40, 
 async function slideInput(tabId, input) {
   const st = slideExportByTab[tabId];
   if (!st) throw new Error("export not started");
+  if (input.kind === "click" || input.kind === "move") {
+    const offset = await computeOffset(tabId); // fresh: layout may have shifted
+    st.offset = offset;
+  }
   if (input.kind === "click") {
     const x = st.offset.x + input.x;
     const y = st.offset.y + input.y;

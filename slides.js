@@ -282,27 +282,36 @@
   async function goToSlide(index, total) {
     const want = index + 1;
     const current = () => { const p = slidePosition(); return p ? p.current : null; };
+    // Arrived when the status/thumbnail position reads `want`, OR the wanted
+    // thumbnail itself is now selected (updates immediately on a real click).
+    const arrived = () => {
+      if (current() === want) return true;
+      const t = thumbByNumber(want);
+      return !!(t && t.getAttribute("aria-selected") === "true");
+    };
     const tries = [];
-    for (let step = 0; step < 6; step++) {
+    for (let step = 0; step < 8; step++) {
+      if (arrived()) return true;
       const cur = current();
-      if (cur === want) return true;
       let input = null;
-      if (step < 4) {
+      if (step < 6) {
         const t = await revealThumb(want, total);
         if (t) {
-          t.scrollIntoView({ block: "nearest" });
-          await nextFrame();
+          // Center it so its position is stable, then measure right before
+          // clicking (the background re-reads the iframe offset each click).
+          t.scrollIntoView({ block: "center" });
+          await sleep(120);
           const b = t.getBoundingClientRect();
-          input = { kind: "click", x: b.left + b.width / 2, y: b.top + b.height / 2 };
+          if (b.width > 4 && b.height > 4) input = { kind: "click", x: b.left + b.width / 2, y: b.top + b.height / 2 };
         }
       }
       if (!input) input = { kind: "key", key: cur !== null && cur > want ? "PageUp" : "PageDown" };
       tries.push(input.kind === "click" ? "click" : input.key);
       await send({ type: "SLIDES_INPUT", input });
       const start = performance.now();
-      while (performance.now() - start < 2000 && current() !== want) await sleep(40);
+      while (performance.now() - start < 3000 && !arrived()) await sleep(50);
     }
-    if (current() === want) return true;
+    if (arrived()) return true;
     const p = slidePosition();
     throw new Error(`could not open slide ${want} (at ${p ? p.current + "/" + p.total : "?"}, thumbs ${thumbnails().length}, tried ${tries.join(",")})`);
   }
