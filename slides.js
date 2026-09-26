@@ -250,6 +250,32 @@
     return thumbnails().find((t) => +t.getAttribute("aria-posinset") === n) || null;
   }
 
+  // The scrollable ancestor of the thumbnail list.
+  function thumbScroller() {
+    const any = thumbnails()[0];
+    let sc = any ? any.parentElement : null;
+    while (sc && sc.scrollHeight <= sc.clientHeight + 2) sc = sc.parentElement;
+    return sc;
+  }
+
+  // Scroll the thumbnail pane so `t` sits fully inside the visible viewport
+  // (scrollIntoView alone can leave it clipped by the pane or off-screen).
+  async function ensureThumbVisible(t) {
+    const sc = thumbScroller();
+    for (let k = 0; k < 6; k++) {
+      const b = t.getBoundingClientRect();
+      const vh = window.innerHeight;
+      const top = sc ? Math.max(0, sc.getBoundingClientRect().top) : 0;
+      const bot = sc ? Math.min(vh, sc.getBoundingClientRect().bottom) : vh;
+      if (b.top >= top + 4 && b.bottom <= bot - 4) return true; // fully visible
+      if (sc) sc.scrollTop += (b.top + b.height / 2) - (top + bot) / 2;
+      else t.scrollIntoView({ block: "center" });
+      await sleep(120);
+    }
+    const b = t.getBoundingClientRect();
+    return b.top >= 0 && b.bottom <= window.innerHeight;
+  }
+
   // The thumbnail list may only render the items near the viewport; scroll
   // it proportionally so thumbnail `n` of `total` gets rendered.
   async function revealThumb(n, total) {
@@ -300,10 +326,11 @@
       if (useClick) {
         const t = await revealThumb(want, total);
         if (t) {
-          t.scrollIntoView({ block: "center" });
-          await sleep(150);
+          await ensureThumbVisible(t);
           const b = t.getBoundingClientRect();
-          if (b.width > 4 && b.height > 4) input = { kind: "click", x: b.left + b.width / 2, y: b.top + b.height / 2 };
+          if (b.width > 4 && b.height > 4 && b.top >= 0 && b.bottom <= window.innerHeight) {
+            input = { kind: "click", x: b.left + b.width / 2, y: b.top + b.height / 2 };
+          }
         }
       }
       if (!input) {
