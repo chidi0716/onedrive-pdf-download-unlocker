@@ -233,17 +233,21 @@
     }
   }
 
-  // The slide box once its position has stopped moving (layout can shift,
-  // e.g. when Chrome shows the "is debugging" bar).
+  // The slide box once it exists and its position has stopped moving. After
+  // switching slides the new slide's box can take a moment to appear (its
+  // picture/graphic is still loading), so wait for it, then for it to settle.
   async function settledSlideBox() {
+    let box = null;
+    for (let k = 0; k < 100 && !box; k++) { box = currentSlideBox(); if (!box) await sleep(100); } // up to ~10s to appear
+    if (!box) return null;
     let prev = null;
     for (let k = 0; k < 30; k++) {
-      const box = currentSlideBox();
+      box = currentSlideBox();
       if (box && prev && sameRect(box.rect, prev)) return box;
       prev = box && box.rect;
       await sleep(100);
     }
-    return currentSlideBox();
+    return box || currentSlideBox();
   }
 
   function thumbByNumber(n) {
