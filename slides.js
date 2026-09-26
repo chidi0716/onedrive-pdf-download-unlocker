@@ -320,37 +320,41 @@
       return !!(t && t.getAttribute("aria-selected") === "true");
     };
     const tries = [];
-    for (let step = 0; step < 10; step++) {
-      if (arrived()) return true;
+    // Strategy A: click the exact thumbnail (fast jump). Try a couple of times.
+    for (let step = 0; step < 3 && !arrived(); step++) {
+      const t = await revealThumb(want, total);
+      if (!t) break;
+      await ensureThumbVisible(t);
+      const b = t.getBoundingClientRect();
+      if (!(b.width > 4 && b.top >= 0 && b.bottom <= window.innerHeight)) break;
+      tries.push("click");
+      await send({ type: "SLIDES_INPUT", input: { kind: "click", x: b.left + b.width / 2, y: b.top + b.height / 2 } });
+      const s = performance.now();
+      while (performance.now() - s < 4000 && !arrived()) await sleep(60);
+    }
+    // Strategy B: step one slide at a time with the keyboard. Focus the
+    // thumbnail list first by clicking the currently-selected (always visible)
+    // thumbnail — that doesn't change slide but makes Arrow keys work.
+    for (let step = 0; step < total + 4 && !arrived(); step++) {
       const cur = current();
-      // Alternate between clicking the thumbnail and keyboard stepping, so a
-      // method that isn't taking effect doesn't stall the whole navigation.
-      let input = null;
-      const useClick = step % 3 !== 2; // click, click, key, click, click, key...
-      if (useClick) {
-        const t = await revealThumb(want, total);
-        if (t) {
-          await ensureThumbVisible(t);
-          const b = t.getBoundingClientRect();
-          if (b.width > 4 && b.height > 4 && b.top >= 0 && b.bottom <= window.innerHeight) {
-            input = { kind: "click", x: b.left + b.width / 2, y: b.top + b.height / 2 };
-          }
+      if (cur == null) break;
+      const sel = thumbByNumber(cur) || thumbnails().find((x) => x.getAttribute("aria-selected") === "true");
+      if (sel) {
+        await ensureThumbVisible(sel);
+        const b = sel.getBoundingClientRect();
+        if (b.width > 4 && b.top >= 0 && b.bottom <= window.innerHeight) {
+          await send({ type: "SLIDES_INPUT", input: { kind: "click", x: b.left + b.width / 2, y: b.top + b.height / 2 } });
         }
       }
-      if (!input) {
-        // step toward the target one slide at a time
-        const sel = thumbnails().find((x) => x.getAttribute("aria-selected") === "true");
-        if (sel) { sel.scrollIntoView({ block: "center" }); await sleep(100); }
-        input = { kind: "key", key: cur !== null && cur > want ? "ArrowUp" : "ArrowDown" };
-      }
-      tries.push(input.kind === "click" ? "click" : input.key);
-      await send({ type: "SLIDES_INPUT", input });
-      const start = performance.now();
-      while (performance.now() - start < 4500 && !arrived()) await sleep(60);
+      const key = cur > want ? "ArrowUp" : "ArrowDown";
+      tries.push(key);
+      await send({ type: "SLIDES_INPUT", input: { kind: "key", key } });
+      const s = performance.now();
+      while (performance.now() - s < 4000 && current() === cur && !arrived()) await sleep(60);
     }
     if (arrived()) return true;
     const p = slidePosition();
-    throw new Error(`could not open slide ${want} (at ${p ? p.current + "/" + p.total : "?"}, thumbs ${thumbnails().length}, tried ${tries.join(",")})`);
+    throw new Error(`could not open slide ${want} (at ${p ? p.current + "/" + p.total : "?"}, thumbs ${thumbnails().length}, tried ${tries.slice(0, 12).join(",")})`);
   }
 
   // ---- export --------------------------------------------------------------
