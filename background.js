@@ -454,6 +454,10 @@ async function beginSlideExport(tabId, frameId, frameUrl) {
   }
   slideExportByTab[tabId].frameId = frameId;
   slideExportByTab[tabId].frameUrl = frameUrl;
+  // Attaching the debugger shows the "is debugging this browser" infobar,
+  // which shrinks the viewport. Let that settle before measuring the iframe
+  // offset once, so the value stays correct for the whole export.
+  await new Promise((r) => setTimeout(r, 700));
   const offset = await computeOffset(tabId);
   slideExportByTab[tabId].offset = offset;
   // In the top page, hide everything except the viewer iframe and its
@@ -487,13 +491,11 @@ async function beginSlideExport(tabId, frameId, frameUrl) {
 async function captureSlide(tabId, rect, scale) {
   const st = slideExportByTab[tabId];
   if (!st) throw new Error("export not started");
-  const offset = await computeOffset(tabId); // fresh: layout may have shifted
-  st.offset = offset;
   const res = await cdp(tabId, "Page.captureScreenshot", {
     format: "jpeg",
     quality: 92,
     captureBeyondViewport: false,
-    clip: { x: offset.x + rect.x, y: offset.y + rect.y, width: rect.width, height: rect.height, scale: scale || 2 },
+    clip: { x: st.offset.x + rect.x, y: st.offset.y + rect.y, width: rect.width, height: rect.height, scale: scale || 2 },
   });
   return res.data; // base64 JPEG
 }
@@ -506,10 +508,6 @@ const KEY_CODES = { PageDown: 34, PageUp: 33, Home: 36, End: 35, ArrowDown: 40, 
 async function slideInput(tabId, input) {
   const st = slideExportByTab[tabId];
   if (!st) throw new Error("export not started");
-  if (input.kind === "click" || input.kind === "move") {
-    const offset = await computeOffset(tabId); // fresh: layout may have shifted
-    st.offset = offset;
-  }
   if (input.kind === "click") {
     const x = st.offset.x + input.x;
     const y = st.offset.y + input.y;

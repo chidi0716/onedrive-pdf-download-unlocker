@@ -290,26 +290,32 @@
       return !!(t && t.getAttribute("aria-selected") === "true");
     };
     const tries = [];
-    for (let step = 0; step < 8; step++) {
+    for (let step = 0; step < 10; step++) {
       if (arrived()) return true;
       const cur = current();
+      // Alternate between clicking the thumbnail and keyboard stepping, so a
+      // method that isn't taking effect doesn't stall the whole navigation.
       let input = null;
-      if (step < 6) {
+      const useClick = step % 3 !== 2; // click, click, key, click, click, key...
+      if (useClick) {
         const t = await revealThumb(want, total);
         if (t) {
-          // Center it so its position is stable, then measure right before
-          // clicking (the background re-reads the iframe offset each click).
           t.scrollIntoView({ block: "center" });
-          await sleep(120);
+          await sleep(150);
           const b = t.getBoundingClientRect();
           if (b.width > 4 && b.height > 4) input = { kind: "click", x: b.left + b.width / 2, y: b.top + b.height / 2 };
         }
       }
-      if (!input) input = { kind: "key", key: cur !== null && cur > want ? "PageUp" : "PageDown" };
+      if (!input) {
+        // step toward the target one slide at a time
+        const sel = thumbnails().find((x) => x.getAttribute("aria-selected") === "true");
+        if (sel) { sel.scrollIntoView({ block: "center" }); await sleep(100); }
+        input = { kind: "key", key: cur !== null && cur > want ? "ArrowUp" : "ArrowDown" };
+      }
       tries.push(input.kind === "click" ? "click" : input.key);
       await send({ type: "SLIDES_INPUT", input });
       const start = performance.now();
-      while (performance.now() - start < 3000 && !arrived()) await sleep(50);
+      while (performance.now() - start < 4500 && !arrived()) await sleep(60);
     }
     if (arrived()) return true;
     const p = slidePosition();
