@@ -331,48 +331,47 @@
       return !!(t && t.getAttribute("aria-selected") === "true");
     };
     const tries = [];
-    // Strategy A: click the exact thumbnail (fast jump). Try a couple of times.
-    for (let step = 0; step < 3 && !arrived(); step++) {
+    // Click the target thumbnail and wait patiently. Transitions can lag on a
+    // slow connection, so verify arrival over a long window before retrying;
+    // if the position hasn't budged across a couple of tries, nudge with an
+    // arrow key. Generous limits so a slow deck still completes.
+    let noMove = 0;
+    for (let step = 0; step < 20 && !arrived(); step++) {
+      const before = current();
       const t = await revealThumb(want, total);
-      if (!t) break;
-      await ensureThumbVisible(t);
-      const b = t.getBoundingClientRect();
-      if (!(b.width > 4 && b.top >= 0 && b.bottom <= window.innerHeight)) break;
-      tries.push("click");
-      await send({ type: "SLIDES_INPUT", input: { kind: "click", x: b.left + b.width / 2, y: b.top + b.height / 2 } });
-      const s = performance.now();
-      while (performance.now() - s < 4000 && !arrived()) await sleep(60);
-    }
-    // Strategy B: step one slide at a time with PageDown/PageUp on the main
-    // slide area (the viewer's standard navigation). Focus it by clicking the
-    // current slide's center first — that doesn't change the slide.
-    for (let step = 0; step < total + 4 && !arrived(); step++) {
-      const cur = current();
-      if (cur == null) break;
-      const box = currentSlideBox();
-      if (box) {
-        const r = box.rect;
-        await send({ type: "SLIDES_INPUT", input: { kind: "click", x: r.left + r.width / 2, y: r.top + r.height / 2 } });
-        await sleep(80);
+      let clicked = false;
+      if (t) {
+        await ensureThumbVisible(t);
+        const b = t.getBoundingClientRect();
+        if (b.width > 4 && b.top >= 0 && b.bottom <= window.innerHeight) {
+          tries.push("click");
+          await send({ type: "SLIDES_INPUT", input: { kind: "click", x: b.left + b.width / 2, y: b.top + b.height / 2 } });
+          clicked = true;
+        }
       }
-      const key = cur > want ? "PageUp" : "PageDown";
-      tries.push(key);
-      await send({ type: "SLIDES_INPUT", input: { kind: "key", key } });
+      if (!clicked) {
+        // target not clickable this moment: step toward it with an arrow key
+        const sel = thumbByNumber(before) || thumbnails().find((x) => x.getAttribute("aria-selected") === "true");
+        if (sel) { await ensureThumbVisible(sel); const sb = sel.getBoundingClientRect(); if (sb.width > 4 && sb.top >= 0 && sb.bottom <= window.innerHeight) await send({ type: "SLIDES_INPUT", input: { kind: "click", x: sb.left + sb.width / 2, y: sb.top + sb.height / 2 } }); }
+        tries.push(before != null && before > want ? "up" : "down");
+        await send({ type: "SLIDES_INPUT", input: { kind: "key", key: before != null && before > want ? "ArrowUp" : "ArrowDown" } });
+      }
+      // wait up to 7s for the position to change or arrive
       const s = performance.now();
-      while (performance.now() - s < 4000 && current() === cur && !arrived()) await sleep(60);
-      // if PageDown on the slide didn't move it, fall back to an arrow key on
-      // the thumbnail list for this step
-      if (current() === cur) {
-        const sel = thumbByNumber(cur);
-        if (sel) { await ensureThumbVisible(sel); const b = sel.getBoundingClientRect(); if (b.width > 4 && b.top >= 0 && b.bottom <= window.innerHeight) await send({ type: "SLIDES_INPUT", input: { kind: "click", x: b.left + b.width / 2, y: b.top + b.height / 2 } }); }
-        await send({ type: "SLIDES_INPUT", input: { kind: "key", key: cur > want ? "ArrowUp" : "ArrowDown" } });
+      while (performance.now() - s < 7000 && !arrived() && current() === before) await sleep(80);
+      if (current() === before) { noMove++; } else { noMove = 0; }
+      // if clicks keep not moving, alternate to keyboard stepping next round
+      if (noMove >= 2 && clicked) {
+        const sel = thumbByNumber(before);
+        if (sel) { await ensureThumbVisible(sel); const sb = sel.getBoundingClientRect(); if (sb.width > 4 && sb.top >= 0 && sb.bottom <= window.innerHeight) await send({ type: "SLIDES_INPUT", input: { kind: "click", x: sb.left + sb.width / 2, y: sb.top + sb.height / 2 } }); }
+        await send({ type: "SLIDES_INPUT", input: { kind: "key", key: before != null && before > want ? "ArrowUp" : "ArrowDown" } });
         const s2 = performance.now();
-        while (performance.now() - s2 < 3000 && current() === cur && !arrived()) await sleep(60);
+        while (performance.now() - s2 < 5000 && !arrived() && current() === before) await sleep(80);
       }
     }
     if (arrived()) return true;
     const p = slidePosition();
-    throw new Error(`could not open slide ${want} (at ${p ? p.current + "/" + p.total : "?"}, thumbs ${thumbnails().length}, tried ${tries.slice(0, 12).join(",")})`);
+    throw new Error(`could not open slide ${want} (at ${p ? p.current + "/" + p.total : "?"}, thumbs ${thumbnails().length}, tried ${tries.slice(0, 14).join(",")})`);
   }
 
   // ---- export --------------------------------------------------------------
