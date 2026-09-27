@@ -54,6 +54,7 @@
       slidesPopupHeading: "PowerPoint slides detected ({n} slides)",
       slidesStarted: "Export started. Progress is shown at the bottom-left of the slide viewer; files go to your Downloads folder.",
       slidesDebuggerNote: "Chrome will show an “is debugging this browser” bar while exporting. That's expected — it's how the extension captures slides at high resolution.",
+      slidesNeedPermission: "The PDF export needs the “debugger” permission to capture slides. Click the button again and choose Allow. (Text export works without it.)",
     },
     "zh-Hant": {
       popupTitleLine1: "OneDrive / SharePoint",
@@ -100,6 +101,7 @@
       slidesPopupHeading: "偵測到 PowerPoint 投影片（共 {n} 張）",
       slidesStarted: "已開始匯出。進度顯示在投影片檢視器左下角，檔案會存到「下載」資料夾。",
       slidesDebuggerNote: "匯出時 Chrome 上方會出現「正在對這個瀏覽器進行偵錯」的提示列，這是正常的，擴充功能靠它來高解析度擷取投影片。",
+      slidesNeedPermission: "匯出 PDF 需要「偵錯工具」權限來擷取投影片。請再按一次按鈕並選擇「允許」。（只匯出文字不需要這個權限。）",
     },
   };
 

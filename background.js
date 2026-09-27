@@ -53,6 +53,7 @@ function extractFileKey(url) {
   }
 }
 const MAX_CANDIDATES = 10;
+const MAX_HEADER_ENTRIES = 50;
 const FALLBACK_MIN_SIZE = 20 * 1024; // 20 KB, only used for the generic fallback match
 
 const URL_KEYWORDS = [
@@ -142,6 +143,10 @@ function onSendHeadersListener(details) {
   }
   if (Object.keys(captured).length > 0) {
     headersByUrl[details.url] = captured;
+    // Entries are consumed in onCompleted; drop the oldest if requests keep
+    // failing before completing, so the map can't grow without bound.
+    const keys = Object.keys(headersByUrl);
+    if (keys.length > MAX_HEADER_ENTRIES) delete headersByUrl[keys[0]];
   }
 }
 
@@ -208,6 +213,7 @@ chrome.webRequest.onCompleted.addListener(
     const size = getContentLength(responseHeaders);
     const filename = getFilenameFromHeaders(responseHeaders);
     const forwardHeaders = headersByUrl[url] || null;
+    delete headersByUrl[url]; // the candidate keeps its own copy
 
     const keywordMatch = URL_KEYWORDS.some((k) => lowerUrl.includes(k));
 
@@ -453,8 +459,23 @@ async function computeOffset(tabId) {
   return (res && res.result && res.result.value) || { x: 0, y: 0 };
 }
 
+// `debugger` is an optional permission (granted from the popup on the first
+// PDF export), so chrome.debugger may only appear after the worker started:
+// hook its detach event on first use rather than at load.
+let detachHooked = false;
+function hookDebuggerDetach() {
+  if (detachHooked || !chrome.debugger || !chrome.debugger.onDetach) return;
+  detachHooked = true;
+  // User dismissed the "is debugging this browser" bar, or the tab went away.
+  chrome.debugger.onDetach.addListener((source) => {
+    if (source.tabId != null) delete slideExportByTab[source.tabId];
+  });
+}
+hookDebuggerDetach();
+
 async function beginSlideExport(tabId, frameId, frameUrl) {
-  if (!chrome.debugger) throw new Error("debugger API unavailable (Chrome/Edge only)");
+  if (!chrome.debugger) throw new Error("debugger permission not granted (open the extension popup and click Export slides)");
+  hookDebuggerDetach();
   if (!slideExportByTab[tabId]) {
     await attachDebugger(tabId);
     slideExportByTab[tabId] = { offset: { x: 0, y: 0 } };
@@ -545,13 +566,6 @@ function endSlideExport(tabId) {
   }).catch(() => {});
   delete slideExportByTab[tabId];
   chrome.debugger.detach({ tabId }, () => void chrome.runtime.lastError);
-}
-
-if (chrome.debugger && chrome.debugger.onDetach) {
-  // User dismissed the "is debugging this browser" bar, or the tab went away.
-  chrome.debugger.onDetach.addListener((source) => {
-    if (source.tabId != null) delete slideExportByTab[source.tabId];
-  });
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {

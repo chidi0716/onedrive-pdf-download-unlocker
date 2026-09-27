@@ -36,6 +36,7 @@
 | `downloads` | 把抓到的檔案內容存成本機檔案 |
 | `activeTab` / `scripting` | 在目前分頁裡讀取檔案標題、觸發瀏覽器原生的下載動作 |
 | `storage` | 只用來記住你選的顯示語言 |
+| `debugger`（選用，Chrome / Edge） | 只在你第一次點「匯出投影片（PDF）」時才會詢問；用來在 PowerPoint 網頁版中翻頁並高解析度擷取投影片畫面，只作用於你按下匯出的那個分頁，匯出結束立刻解除。擷取的畫面只在本機組成 PDF，不會傳出去 |
 | `host_permissions`（限定 sharepoint.com、sharepointonline.com、onedrive.live.com、officeapps.live.com、1drv.ms、svc.ms、mcas.ms、login.microsoftonline.com、login.windows.net、spoprod-a.akamaihd.net） | 只在這些微軟 OneDrive / SharePoint 相關網域上運作（`svc.ms` 是實際傳送檔案內容的後端服務網域；`mcas.ms` 是部分企業/學校啟用的安全代理網域；其餘是登入與靜態資源網域），不會影響或讀取其他網站 |
 
 ---
@@ -70,4 +71,5 @@ Nothing else is stored. Detected file-request information for a tab is automatic
 | `downloads` | Save the fetched file content as a local file |
 | `activeTab` / `scripting` | Read the document title in the current tab and trigger the browser's native download action |
 | `storage` | Remember only your chosen display language |
+| `debugger` (optional, Chrome / Edge) | Requested only the first time you click "Export slides (PDF)". Used to step through slides in PowerPoint for the web and capture them at high resolution, only in the tab you export from, and released as soon as the export ends. Captures are assembled into a PDF locally and never sent anywhere |
 | `host_permissions` (limited to sharepoint.com, sharepointonline.com, onedrive.live.com, officeapps.live.com, 1drv.ms, svc.ms, mcas.ms, login.microsoftonline.com, login.windows.net, spoprod-a.akamaihd.net) | The extension only operates on these Microsoft OneDrive/SharePoint domains (`svc.ms` actually serves file content; `mcas.ms` is a security proxy domain some organizations enable; the rest are sign-in and static-asset domains) and does not access or affect any other website |
