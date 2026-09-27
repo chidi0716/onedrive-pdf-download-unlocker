@@ -420,30 +420,37 @@ function attachDebugger(tabId) {
   });
 }
 
-// Current position of the viewer iframe in the top page. Recomputed fresh
-// before every click/capture: the layout shifts after the export starts (the
-// "is debugging" infobar appears, the thumbnail pane scrolls), so a value
-// cached once at BEGIN goes stale and clicks land in the wrong place.
+// Offset from the viewer frame's coordinates to the top-page viewport that
+// CDP mouse/screenshot coordinates use. The PowerPoint viewer iframe fills the
+// whole top viewport (with the SharePoint chrome isolated away), so the
+// viewer's own client coordinates ARE the top-viewport coordinates: the offset
+// is {0,0}. We derive it by locating the viewer iframe, but if that lands
+// somewhere implausible (a stale/wrong iframe) we fall back to {0,0}, which
+// earlier guesswork got wrong and sent every click a slide off.
 async function computeOffset(tabId) {
   const st = slideExportByTab[tabId];
   if (!st || st.frameId === 0) return { x: 0, y: 0 };
   const origin = new URL(st.frameUrl).origin;
   const expr = `(() => {
+    const vw = window.innerWidth, vh = window.innerHeight;
     const frames = [...document.querySelectorAll("iframe")];
     const pick =
       frames.find((f) => { try { return new URL(f.src, location.href).origin === ${JSON.stringify(origin)}; } catch (e) { return false; } }) ||
       frames.find((f) => /^WacFrame_/i.test(f.id || f.name || "")) ||
       frames.map((f) => [f, f.getBoundingClientRect()]).filter(([, b]) => b.width > 0 && b.height > 0)
         .sort((a, b) => b[1].width * b[1].height - a[1].width * a[1].height).map(([f]) => f)[0];
-    if (!pick) return null;
+    if (!pick) return { x: 0, y: 0 };
     const b = pick.getBoundingClientRect();
     const cs = getComputedStyle(pick);
-    return { x: b.x + parseFloat(cs.borderLeftWidth) + parseFloat(cs.paddingLeft),
-             y: b.y + parseFloat(cs.borderTopWidth) + parseFloat(cs.paddingTop) };
+    const x = b.x + parseFloat(cs.borderLeftWidth) + parseFloat(cs.paddingLeft);
+    const y = b.y + parseFloat(cs.borderTopWidth) + parseFloat(cs.paddingTop);
+    // The viewer fills the viewport; a large offset means we found the wrong
+    // element, so ignore it. Only a small inset (a header bar) is trusted.
+    if (Math.abs(x) > vw * 0.2 || y < -1 || y > vh * 0.2) return { x: 0, y: 0 };
+    return { x, y };
   })()`;
   const res = await cdp(tabId, "Runtime.evaluate", { expression: expr, returnByValue: true });
-  if (!res || !res.result || !res.result.value) throw new Error("viewer iframe not found in page");
-  return res.result.value;
+  return (res && res.result && res.result.value) || { x: 0, y: 0 };
 }
 
 async function beginSlideExport(tabId, frameId, frameUrl) {
