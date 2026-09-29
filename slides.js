@@ -238,40 +238,39 @@
 
   const sameRect = (a, b) => !!a && !!b && ["left", "top", "width", "height"].every((p) => Math.abs(a[p] - b[p]) < 0.5);
 
-  // Resolve the moment the current slide has actually finished rendering, so we
-  // capture and move on immediately instead of waiting out a fixed idle window.
-  // "Finished" = a real (non-derived) slide box whose position has stopped
-  // moving, every image in the slide loaded, fonts ready, and no new fetch for
-  // a short beat — confirmed across two polls so we never fire in a mid-render
-  // gap. This is both faster (no fixed tail) and safer (won't capture with a
-  // picture still loading) than the previous quiet-window wait. Capped at maxMs.
-  async function waitSlideRendered(maxMs) {
-    const start = performance.now();
-    let prevRect = null, hits = 0;
-    while (performance.now() - start < maxMs) {
-      const box = currentSlideBox();
-      const rect = box && box.rect;
-      const wrap = box && box.el && box.el.closest ? (box.el.closest("[id^=PageContentSizeWrapper]") || box.el) : viewPanel();
-      const imgs = wrap ? [...wrap.querySelectorAll("img")] : [];
-      const pending = imgs.some((i) => !i.complete || i.naturalWidth === 0);
-      const quiet = performance.now() - lastResourceAt > 120;
-      const stable = box && box.method !== "derived" && sameRect(rect, prevRect);
-      if (stable && !pending && quiet) {
-        if (++hits >= 2) {
-          if (document.fonts && document.fonts.status !== "loaded") await document.fonts.ready;
-          await nextFrame();
-          return performance.now() - start;
-        }
-      } else {
-        hits = 0;
-      }
-      prevRect = rect;
-      await sleep(50);
+  // Is `wrap` a rendered slide (not the blank "loading" placeholder)? A slide
+  // that has switched but not yet drawn its content has an empty container with
+  // just a loading placeholder; capturing it gives the broken-image blank pages
+  // we saw. Treat it as rendered once it has real text, a shape/background SVG,
+  // or a fully-loaded picture.
+  function wrapperHasContent(wrap) {
+    if (!wrap) return false;
+    if (slideTextFrom(wrap).length > 0) return true;
+    for (const svg of wrap.querySelectorAll("svg")) {
+      const b = svg.getBoundingClientRect();
+      const r = b.height ? b.width / b.height : 0;
+      if (b.width >= 200 && r >= 1.2 && r <= 1.9) return true; // slide-shaped background
     }
-    // Timed out (slow render / flaky fetch): fall back to the idle-window wait
-    // so we still capture a sane frame rather than aborting.
-    await waitForStable(viewPanel(), 180, 800);
-    return performance.now() - start;
+    return [...wrap.querySelectorAll("img")].some((i) => i.complete && i.naturalWidth > 1);
+  }
+
+  // Wait until slide `index` is the one actually shown AND its content has
+  // rendered, then wait for it to stop changing. The visible-wrapper check
+  // guards against capturing while the previous slide is still on screen (the
+  // status/thumbnail position updates before the canvas repaints); the content
+  // check guards against capturing a blank mid-load slide. waitForStable then
+  // watches DOM mutations, so a slide whose picture/graphic streams in over a
+  // second is still awaited rather than captured early.
+  async function waitSlideReady(index, maxMs) {
+    const want = "PageContentSizeWrapper" + index;
+    const start = performance.now();
+    while (performance.now() - start < maxMs) {
+      const wrap = [...document.querySelectorAll("[id^=PageContentSizeWrapper]")].find((w) => w.getBoundingClientRect().width > 0);
+      if (wrap && wrap.id === want && wrapperHasContent(wrap)) break;
+      await sleep(60);
+    }
+    const left = Math.max(1200, maxMs - (performance.now() - start));
+    await waitForStable(viewPanel(), 220, left);
   }
 
   // Wait until the slide hasn't moved for `quietMs` (the viewer shifts its
@@ -391,15 +390,18 @@
     return !!(a && a !== document.body && a.closest('[role="listbox"], [role="option"]'));
   }
 
-  // Give the thumbnail list keyboard focus at the current slide. Try a plain
-  // focus() first; if the browser doesn't move focus into this (cross-origin)
-  // frame, click the selected thumbnail — it's already selected, so the click
-  // only focuses the list.
+  // Give the thumbnail list keyboard focus at the current slide. Already
+  // focused: nothing to do (re-focusing every step made the browser scroll the
+  // list, which churned the whole viewer — the "keeps switching view" the user
+  // saw). Otherwise focus without scrolling; only if that doesn't take (a
+  // cross-origin frame can refuse focus()) click the already-selected thumbnail
+  // to focus the list, which doesn't change the slide.
   async function focusThumbList(forceClick) {
+    if (!forceClick && thumbListHasFocus()) return true;
     const sel = selectedThumb();
     if (!sel) return false;
     if (!forceClick) {
-      try { sel.focus(); } catch (e) { /* ignore */ }
+      try { sel.focus({ preventScroll: true }); } catch (e) { /* ignore */ }
       if (thumbListHasFocus()) return true;
     }
     await clickThumb(sel);
@@ -431,7 +433,9 @@
       else if (want === total && cur !== total && Math.abs(dist) > 3) key = "End";
       else if (Math.abs(dist) <= 3) key = dist > 0 ? "ArrowDown" : "ArrowUp";
       if (key && stuck < 2) {
-        // After a key that didn't move anything, re-focus with a click.
+        // Keep focus in the list (only re-focuses/clicks if it was lost, or if
+        // a previous key did nothing — stuck > 0). Sequential paging therefore
+        // sends bare ArrowDowns with no per-step focus churn.
         await focusThumbList(stuck > 0);
         tries.push(key);
         await send({ type: "SLIDES_INPUT", input: { kind: "key", key } });
@@ -528,15 +532,18 @@
     await waitLayoutQuiet(1500, 10000);
     try {
       if (withImages) hideHints(true);
+      // Focus the thumbnail list once up front so the whole export navigates by
+      // bare arrow keys, with no per-slide focus/scroll churn.
+      await focusThumbList(false);
       for (let i = 0; i < n; i++) {
         setStatus(tr("slidesProgress", { i: i + 1, n }));
         let t = performance.now();
         await goToSlide(i, n);
         timings.nav += performance.now() - t;
         t = performance.now();
-        // Advance as soon as the slide has actually rendered (images loaded,
-        // box settled), rather than waiting out a fixed idle window.
-        await waitSlideRendered(5000);
+        // Wait for the target slide to actually be shown and rendered (guards
+        // against blank/duplicate captures) before capturing.
+        await waitSlideReady(i, 8000);
         timings.render += performance.now() - t;
         texts.push(`--- Slide ${i + 1} ---\n${slideTextFrom(wrapperFor(i))}`);
         if (withImages) {
@@ -549,7 +556,7 @@
           // Re-measure after capturing: if the layout moved meanwhile, the
           // capture is off, so take it again.
           for (let attempt = 0; attempt < 3; attempt++) {
-            // waitSlideRendered already left a real, settled box, so take it
+            // waitSlideReady already left a real, settled box, so take it
             // directly; only fall back to the slower settle if it's gone.
             let box = currentSlideBox();
             if (!box || box.method === "derived") box = await settledSlideBox();
