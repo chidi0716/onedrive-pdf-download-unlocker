@@ -238,6 +238,42 @@
 
   const sameRect = (a, b) => !!a && !!b && ["left", "top", "width", "height"].every((p) => Math.abs(a[p] - b[p]) < 0.5);
 
+  // Resolve the moment the current slide has actually finished rendering, so we
+  // capture and move on immediately instead of waiting out a fixed idle window.
+  // "Finished" = a real (non-derived) slide box whose position has stopped
+  // moving, every image in the slide loaded, fonts ready, and no new fetch for
+  // a short beat — confirmed across two polls so we never fire in a mid-render
+  // gap. This is both faster (no fixed tail) and safer (won't capture with a
+  // picture still loading) than the previous quiet-window wait. Capped at maxMs.
+  async function waitSlideRendered(maxMs) {
+    const start = performance.now();
+    let prevRect = null, hits = 0;
+    while (performance.now() - start < maxMs) {
+      const box = currentSlideBox();
+      const rect = box && box.rect;
+      const wrap = box && box.el && box.el.closest ? (box.el.closest("[id^=PageContentSizeWrapper]") || box.el) : viewPanel();
+      const imgs = wrap ? [...wrap.querySelectorAll("img")] : [];
+      const pending = imgs.some((i) => !i.complete || i.naturalWidth === 0);
+      const quiet = performance.now() - lastResourceAt > 120;
+      const stable = box && box.method !== "derived" && sameRect(rect, prevRect);
+      if (stable && !pending && quiet) {
+        if (++hits >= 2) {
+          if (document.fonts && document.fonts.status !== "loaded") await document.fonts.ready;
+          await nextFrame();
+          return performance.now() - start;
+        }
+      } else {
+        hits = 0;
+      }
+      prevRect = rect;
+      await sleep(50);
+    }
+    // Timed out (slow render / flaky fetch): fall back to the idle-window wait
+    // so we still capture a sane frame rather than aborting.
+    await waitForStable(viewPanel(), 180, 800);
+    return performance.now() - start;
+  }
+
   // Wait until the slide hasn't moved for `quietMs` (the viewer shifts its
   // layout a few seconds after opening, when the real header replaces the
   // loading skeleton). Gives up after `maxMs`.
@@ -498,12 +534,9 @@
         await goToSlide(i, n);
         timings.nav += performance.now() - t;
         t = performance.now();
-        // Watch the whole view panel, not just the slide: loading overlays
-        // (e.g. while a SmartArt graphic renders) live outside the slide. The
-        // quiet window is short because waitForStable still blocks on any
-        // in-flight image/font — this only shortens the idle tail once the
-        // slide has actually stopped changing.
-        await waitForStable(viewPanel(), 180, 5000);
+        // Advance as soon as the slide has actually rendered (images loaded,
+        // box settled), rather than waiting out a fixed idle window.
+        await waitSlideRendered(5000);
         timings.render += performance.now() - t;
         texts.push(`--- Slide ${i + 1} ---\n${slideTextFrom(wrapperFor(i))}`);
         if (withImages) {
@@ -516,7 +549,10 @@
           // Re-measure after capturing: if the layout moved meanwhile, the
           // capture is off, so take it again.
           for (let attempt = 0; attempt < 3; attempt++) {
-            const box = await settledSlideBox();
+            // waitSlideRendered already left a real, settled box, so take it
+            // directly; only fall back to the slower settle if it's gone.
+            let box = currentSlideBox();
+            if (!box || box.method === "derived") box = await settledSlideBox();
             if (!box) throw new Error("slide " + (i + 1) + " not found on screen");
             const r = box.rect;
             res = await send({ type: "SLIDES_CAPTURE", rect: { x: r.left, y: r.top, width: r.width, height: r.height }, scale: OUTPUT_WIDTH_PX / r.width });
