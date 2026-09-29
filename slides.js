@@ -93,9 +93,18 @@
     return document.getElementById("PageContentSizeWrapper" + index);
   }
 
-  // The slide currently shown. Each slide's container holds an <svg> exactly
-  // the size of the slide (its background); use the largest one in the
-  // visible container. Falls back to the smallest slide-shaped box.
+  // The slide currently shown, as {el, rect, method}. Each slide's container
+  // holds an <svg> exactly the size of the slide (its background); the largest
+  // slide-shaped one is the true slide rect (method "svg"). If that isn't in
+  // the DOM yet we fall back to a slide-shaped div ("div"), and only as a last
+  // resort derive a 16:9 rect from the wrapper ("derived").
+  //
+  // The distinction matters: the derived rect is taken from a container that,
+  // early in the first slide's load (before the real slide SVG exists), spans
+  // down into the viewer's status bar, so capturing it puts the status bar in
+  // the image and shifts the slide up. settledSlideBox() therefore waits for a
+  // non-derived box before the first capture instead of trusting whatever
+  // currentSlideBox() returns immediately.
   function currentSlideBox() {
     const panel = viewPanel();
     if (!panel) return null;
@@ -106,7 +115,7 @@
         const b = svg.getBoundingClientRect();
         const ratio = b.height ? b.width / b.height : 0;
         if (b.width < 200 || ratio < 1.2 || ratio > 1.9) continue;
-        if (!best || b.width * b.height > best.rect.width * best.rect.height) best = { el: svg, rect: b };
+        if (!best || b.width * b.height > best.rect.width * best.rect.height) best = { el: svg, rect: b, method: "svg" };
       }
       if (best) return best;
     }
@@ -119,18 +128,19 @@
       const ratio = b.width / b.height;
       if (ratio < 1.2 || ratio > 1.9) continue; // 4:3 .. 16:9 (and a bit)
       // smallest qualifying box = the page itself, not its wrappers
-      if (!best || b.width * b.height < best.rect.width * best.rect.height) best = { el, rect: b };
+      if (!best || b.width * b.height < best.rect.width * best.rect.height) best = { el, rect: b, method: "div" };
     }
     if (best) return best;
     // Last resort: derive a 16:9 slide rect centered in the visible wrapper
-    // (or the view panel), so a slide that renders without a detectable
-    // background box can still be captured.
-    const host = wrap || panel;
-    const hb = host.getBoundingClientRect();
-    if (hb.width > 200 && hb.height > 120) {
-      let w = hb.width, h = w * 9 / 16;
-      if (h > hb.height) { h = hb.height; w = h * 16 / 9; }
-      return { el: host, rect: { left: hb.left + (hb.width - w) / 2, top: hb.top + (hb.height - h) / 2, width: w, height: h, right: 0, bottom: 0 } };
+    // (never the whole panel — that includes the status bar), so a slide that
+    // renders without a detectable background box can still be captured.
+    if (wrap) {
+      const hb = wrap.getBoundingClientRect();
+      if (hb.width > 200 && hb.height > 120) {
+        let w = hb.width, h = w * 9 / 16;
+        if (h > hb.height) { h = hb.height; w = h * 16 / 9; }
+        return { el: wrap, rect: { left: hb.left + (hb.width - w) / 2, top: hb.top + (hb.height - h) / 2, width: w, height: h, right: 0, bottom: 0 }, method: "derived" };
+      }
     }
     return null;
   }
@@ -160,7 +170,11 @@
       // never part of the slide itself).
       st.textContent =
         ".visiblePromptTextContent, .visiblePromptTextContent * { visibility: hidden !important; }" +
-        ".ShapeSelectionOverlay { display: none !important; }";
+        ".ShapeSelectionOverlay { display: none !important; }" +
+        // The viewer's own status bar sits just below the slide; if a capture
+        // rect is ever a touch too tall it would appear at the image's bottom.
+        // Hide it (and the bottom toolbar) for the duration of the capture.
+        "#WACStatusBarContainer, [id^=StatusBar], [class*=StatusBarContainer], [class*=DocumentStatusBar] { visibility: hidden !important; }";
       document.head.appendChild(st);
     } else if (!on && st) {
       st.remove();
@@ -244,16 +258,23 @@
     }
   }
 
-  // The slide box once it exists and its position has stopped moving. After
-  // switching slides the new slide's box can take a moment to appear (its
-  // picture/graphic is still loading), so wait for it, then for it to settle.
+  // The slide box once the real slide background exists and has stopped moving.
+  // Prefer an actual slide box (method "svg"/"div") over the derived fallback,
+  // which early in the first slide's load spans the status bar: wait up to ~5s
+  // for a real box before accepting the fallback, then wait for it to settle.
   async function settledSlideBox() {
     let box = null;
-    for (let k = 0; k < 100 && !box; k++) { box = currentSlideBox(); if (!box) await sleep(100); } // up to ~10s to appear
+    for (let k = 0; k < 100; k++) { // up to ~10s to appear
+      box = currentSlideBox();
+      if (box && box.method !== "derived") break; // real slide box
+      if (box && k >= 50) break; // only derived after ~5s: accept it
+      box = box && box.method === "derived" ? box : null;
+      await sleep(100);
+    }
     if (!box) return null;
     let prev = null;
     for (let k = 0; k < 30; k++) {
-      box = currentSlideBox();
+      box = currentSlideBox() || box;
       if (box && prev && sameRect(box.rect, prev)) return box;
       prev = box && box.rect;
       await sleep(100);
@@ -436,8 +457,10 @@
 
   // Every page is rendered to this width regardless of how big the slide
   // happens to be on screen, so pages come out the same size and sharp.
-  // 960 pt is the width of a standard 16:9 slide.
-  const OUTPUT_WIDTH_PX = 2000;
+  // 960 pt is the width of a standard 16:9 slide. 1600 px over a 960 pt page is
+  // ~120 dpi — sharp for on-screen reading and printing, and roughly 40 %
+  // fewer bytes than 2000 px, which keeps the image-based PDF from bloating.
+  const OUTPUT_WIDTH_PX = 1600;
   const PAGE_WIDTH_PT = 960;
 
   async function exportSlides(withImages, setStatus) {
@@ -476,8 +499,11 @@
         timings.nav += performance.now() - t;
         t = performance.now();
         // Watch the whole view panel, not just the slide: loading overlays
-        // (e.g. while a SmartArt graphic renders) live outside the slide.
-        await waitForStable(viewPanel(), 300, 5000);
+        // (e.g. while a SmartArt graphic renders) live outside the slide. The
+        // quiet window is short because waitForStable still blocks on any
+        // in-flight image/font — this only shortens the idle tail once the
+        // slide has actually stopped changing.
+        await waitForStable(viewPanel(), 180, 5000);
         timings.render += performance.now() - t;
         texts.push(`--- Slide ${i + 1} ---\n${slideTextFrom(wrapperFor(i))}`);
         if (withImages) {

@@ -525,7 +525,7 @@ async function captureSlide(tabId, rect, scale) {
   if (!st) throw new Error("export not started");
   const res = await cdp(tabId, "Page.captureScreenshot", {
     format: "jpeg",
-    quality: 92,
+    quality: 80,
     captureBeyondViewport: false,
     clip: { x: st.offset.x + rect.x, y: st.offset.y + rect.y, width: rect.width, height: rect.height, scale: scale || 2 },
   });
