@@ -505,18 +505,22 @@ async function beginSlideExport(tabId, frameId, frameUrl) {
 async function captureSlide(tabId, rect, scale) {
   const st = slideExportByTab[tabId];
   if (!st) throw new Error("export not started");
-  const res = await cdp(tabId, "Page.captureScreenshot", {
-    format: "jpeg",
-    quality: 80,
-    // Capture from the renderer's compositor, NOT the OS window surface.
-    // fromSurface:true (the default) routes through the window surface, which on
-    // some browsers (Arc) briefly flips the window into a fullscreen composite —
-    // the per-slide "flash into fullscreen" the user saw. fromSurface:false
-    // grabs the same pixels straight from the page without touching the surface.
-    fromSurface: false,
-    captureBeyondViewport: false,
-    clip: { x: st.offset.x + rect.x, y: st.offset.y + rect.y, width: rect.width, height: rect.height, scale: scale || 2 },
-  });
+  const clip = { x: st.offset.x + rect.x, y: st.offset.y + rect.y, width: rect.width, height: rect.height, scale: scale || 2 };
+  const shot = (fromSurface) => cdp(tabId, "Page.captureScreenshot", { format: "jpeg", quality: 80, fromSurface, captureBeyondViewport: false, clip });
+  // Prefer fromSurface:false — it grabs the pixels straight from the renderer
+  // instead of the OS window surface, which avoids the per-slide fullscreen
+  // flash some browsers (Arc) show when routing through the surface. But not
+  // every browser honours it: if it errors or doesn't answer in time, fall back
+  // to the default surface capture so the export never stalls on a slide.
+  let res;
+  try {
+    res = await Promise.race([
+      shot(false),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("fromSurface:false timed out")), 4000)),
+    ]);
+  } catch (e) {
+    res = await shot(true);
+  }
   return res.data; // base64 JPEG
 }
 

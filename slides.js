@@ -662,6 +662,10 @@
   function setStatus(text, kind) {
     ensureBar();
     statusEl.textContent = text;
+    // Always make the bar visible: it is hidden momentarily during each capture,
+    // so an error thrown mid-capture must un-hide it or the message is lost (the
+    // "progress just vanished" the user saw).
+    bar.style.visibility = "";
     // Colour the bar so a failure is obvious at a glance during testing.
     bar.style.background = kind === "error" ? "rgba(140,20,20,.95)" : kind === "done" ? "rgba(20,110,50,.95)" : "rgba(32,32,32,.92)";
     // Also readable from DevTools / a screenshot when troubleshooting.
