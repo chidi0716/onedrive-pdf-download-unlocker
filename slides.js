@@ -174,7 +174,13 @@
         // The viewer's own status bar sits just below the slide; if a capture
         // rect is ever a touch too tall it would appear at the image's bottom.
         // Hide it (and the bottom toolbar) for the duration of the capture.
-        "#WACStatusBarContainer, [id^=StatusBar], [class*=StatusBarContainer], [class*=DocumentStatusBar] { visibility: hidden !important; }";
+        "#WACStatusBarContainer, [id^=StatusBar], [class*=StatusBarContainer], [class*=DocumentStatusBar] { visibility: hidden !important; }" +
+        // Floating notifications / callouts / tooltips (e.g. the "you don't have
+        // permission to edit" toast) can overlap the slide's corner and get into
+        // the capture. They're never part of the slide, so hide them while we
+        // export. The capture is clipped to the slide, so this is all that can
+        // land on top of it.
+        ".ms-Callout, .ms-Layer, [class*=Callout], [class*=allout], [class*=otification], [class*=oastNotification], [class*=Tooltip], [class*=ooltip], [role=alert], [role=alertdialog], [role=tooltip] { visibility: hidden !important; }";
       document.head.appendChild(st);
     } else if (!on && st) {
       st.remove();
@@ -578,7 +584,11 @@
             if (!box || box.method === "derived") box = await settledSlideBox();
             if (!box) throw new Error("slide " + (i + 1) + " not found on screen");
             const r = box.rect;
-            res = await send({ type: "SLIDES_CAPTURE", rect: { x: r.left, y: r.top, width: r.width, height: r.height }, scale: OUTPUT_WIDTH_PX / r.width });
+            // Divide by the device pixel ratio: the debugger screenshot renders
+            // at the display's DPR, so on a 2x (Retina) screen a scale meant for
+            // 1600 px came out 3200 px — doubling every file. This keeps the
+            // output at OUTPUT_WIDTH_PX regardless of the display.
+            res = await send({ type: "SLIDES_CAPTURE", rect: { x: r.left, y: r.top, width: r.width, height: r.height }, scale: OUTPUT_WIDTH_PX / r.width / (window.devicePixelRatio || 1) });
             if (!res || !res.ok) throw new Error((res && res.error) || "capture failed");
             const after = currentSlideBox();
             if (after && sameRect(after.rect, r)) break;

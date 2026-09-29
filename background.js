@@ -508,6 +508,12 @@ async function captureSlide(tabId, rect, scale) {
   const res = await cdp(tabId, "Page.captureScreenshot", {
     format: "jpeg",
     quality: 80,
+    // Capture from the renderer's compositor, NOT the OS window surface.
+    // fromSurface:true (the default) routes through the window surface, which on
+    // some browsers (Arc) briefly flips the window into a fullscreen composite —
+    // the per-slide "flash into fullscreen" the user saw. fromSurface:false
+    // grabs the same pixels straight from the page without touching the surface.
+    fromSurface: false,
     captureBeyondViewport: false,
     clip: { x: st.offset.x + rect.x, y: st.offset.y + rect.y, width: rect.width, height: rect.height, scale: scale || 2 },
   });
