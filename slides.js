@@ -213,8 +213,8 @@
       };
       const check = async () => {
         const sinceFetch = performance.now() - lastResourceAt;
-        if (sinceFetch < quietMs + 200) {
-          timer = setTimeout(check, quietMs + 200 - sinceFetch);
+        if (sinceFetch < quietMs + 100) {
+          timer = setTimeout(check, quietMs + 100 - sinceFetch);
           return;
         }
         const imgs = [...el.querySelectorAll("img")].filter((i) => !i.complete);
@@ -269,11 +269,13 @@
       if (wrap && wrap.id === want && wrapperHasContent(wrap)) break;
       await sleep(60);
     }
-    const left = Math.max(1000, maxMs - (performance.now() - start));
-    // Short quiet window: with the view no longer churning (no stray clicks
-    // into the slide, no blinking caret), the slide settles almost immediately
-    // once its content is in, so we don't need to sit on a long idle tail.
-    await waitForStable(viewPanel(), 140, left);
+    const left = Math.max(900, maxMs - (performance.now() - start));
+    // Short quiet window: with the view no longer churning (no isolation
+    // toggling the browser chrome, no stray clicks, no blinking caret), the
+    // slide settles the instant its content is in, so we capture right after a
+    // brief idle rather than sitting on a long tail. The content gate above
+    // already guarantees the real slide is present, so this can't fire blank.
+    await waitForStable(viewPanel(), 80, left);
   }
 
   // Wait until the slide hasn't moved for `quietMs` (the viewer shifts its
