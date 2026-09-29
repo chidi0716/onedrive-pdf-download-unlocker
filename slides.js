@@ -542,6 +542,13 @@
       // Focus the thumbnail list once up front so the whole export navigates by
       // bare arrow keys.
       focusThumbList();
+      if (withImages) {
+        // Park the mouse ONCE, off the slide, so it can't cast a hover tooltip
+        // into any capture — but far from the top edge (which makes Arc show its
+        // toolbar) and the bottom-right presentation button. Left-hand mid-height
+        // sits over the thumbnail rail, which is outside every slide clip.
+        await send({ type: "SLIDES_INPUT", input: { kind: "move", x: 5, y: Math.round(window.innerHeight / 2) } });
+      }
       for (let i = 0; i < n; i++) {
         setStatus(tr("slidesProgress", { i: i + 1, n }));
         let t = performance.now();
