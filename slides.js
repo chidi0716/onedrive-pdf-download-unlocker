@@ -260,28 +260,55 @@
     return [...wrap.querySelectorAll("img")].some((i) => i.complete && i.naturalWidth > 1);
   }
 
-  // Wait until slide `index` is the one actually shown AND its content has
-  // rendered, then wait for it to stop changing. The visible-wrapper check
-  // guards against capturing while the previous slide is still on screen (the
-  // status/thumbnail position updates before the canvas repaints); the content
-  // check guards against capturing a blank mid-load slide. waitForStable then
-  // watches DOM mutations, so a slide whose picture/graphic streams in over a
-  // second is still awaited rather than captured early.
+  // A cheap fingerprint of everything a slide has drawn so far: element count,
+  // total text length, and how many images (and how many of those have finished
+  // loading). When a picture streams in after the text, the image count and the
+  // loaded count change, so the fingerprint keeps changing until the slide is
+  // truly complete.
+  function slideSignature(wrap) {
+    const imgs = wrap.querySelectorAll("img");
+    let loaded = 0;
+    for (const i of imgs) if (i.complete && i.naturalWidth > 0) loaded++;
+    return wrap.querySelectorAll("*").length + "/" + (wrap.textContent || "").length + "/" + imgs.length + "/" + loaded;
+  }
+
+  // Wait until slide `index` is the one actually shown AND it has finished
+  // rendering, then capture. Finished = the target wrapper is the visible one,
+  // every image in it has loaded, the network has been quiet for a beat, AND its
+  // fingerprint hasn't changed across two consecutive checks. That last part is
+  // what fixes "captured a page before it loaded": a slide whose text arrives
+  // first but whose picture streams in a moment later keeps changing its
+  // fingerprint (a new <img>, then that <img> finishing) until it's really done,
+  // so we wait for it instead of firing on the text alone. Text-only slides have
+  // no pending images and settle immediately, so they stay fast.
   async function waitSlideReady(index, maxMs) {
     const want = "PageContentSizeWrapper" + index;
     const start = performance.now();
+    let wrap = null;
     while (performance.now() - start < maxMs) {
-      const wrap = [...document.querySelectorAll("[id^=PageContentSizeWrapper]")].find((w) => w.getBoundingClientRect().width > 0);
+      wrap = [...document.querySelectorAll("[id^=PageContentSizeWrapper]")].find((w) => w.getBoundingClientRect().width > 0);
       if (wrap && wrap.id === want && wrapperHasContent(wrap)) break;
-      await sleep(60);
+      wrap = null;
+      await sleep(50);
     }
-    const left = Math.max(900, maxMs - (performance.now() - start));
-    // Short quiet window: with the view no longer churning (no isolation
-    // toggling the browser chrome, no stray clicks, no blinking caret), the
-    // slide settles the instant its content is in, so we capture right after a
-    // brief idle rather than sitting on a long tail. The content gate above
-    // already guarantees the real slide is present, so this can't fire blank.
-    await waitForStable(viewPanel(), 80, left);
+    if (!wrap) return;
+    let prevSig = null, stable = 0;
+    while (performance.now() - start < maxMs) {
+      const imgs = [...wrap.querySelectorAll("img")];
+      const pending = imgs.some((i) => !i.complete || i.naturalWidth === 0);
+      const quiet = performance.now() - lastResourceAt > 180; // no tile/graphic fetch lately
+      const sig = slideSignature(wrap);
+      const same = sig === prevSig;
+      prevSig = sig;
+      if (!pending && quiet && same) {
+        if (++stable >= 2) break; // confirmed done across two checks
+      } else {
+        stable = 0;
+      }
+      await sleep(90);
+    }
+    if (document.fonts && document.fonts.status !== "loaded") await document.fonts.ready.catch(() => {});
+    await nextFrame();
   }
 
   // Wait until the slide hasn't moved for `quietMs` (the viewer shifts its
