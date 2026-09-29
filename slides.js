@@ -555,10 +555,8 @@
         texts.push(`--- Slide ${i + 1} ---\n${slideTextFrom(wrapperFor(i))}`);
         if (withImages) {
           setStatus(tr("slidesProgress", { i: i + 1, n }) + " ⤵");
-          // Park the mouse at the top-left corner — off the slide, and away from
-          // the bottom-right status bar (whose presentation button a stray move
-          // could trip) — so no hover tooltip lands in the capture.
-          await send({ type: "SLIDES_INPUT", input: { kind: "move", x: 2, y: 2 } });
+          // No per-slide mouse move: it was a suspect for the per-slide view
+          // flicker and isn't needed (the capture is clipped to the slide).
           if (bar) bar.style.visibility = "hidden";
           let res = null;
           t = performance.now();

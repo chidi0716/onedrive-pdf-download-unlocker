@@ -492,31 +492,13 @@ async function beginSlideExport(tabId, frameId, frameUrl) {
   await new Promise((r) => setTimeout(r, 700));
   const offset = await computeOffset(tabId);
   slideExportByTab[tabId].offset = offset;
-  // In the top page, hide everything except the viewer iframe and its
-  // ancestors, so nothing SharePoint (or our own download button) floats over
-  // the slide in the captures. The iframe fills the page, so nothing visible
-  // to the user changes.
-  if (frameId !== 0) {
-    await cdp(tabId, "Runtime.evaluate", {
-      expression: `(() => {
-        if (document.documentElement.hasAttribute("data-odpdf-isolated")) return;
-        const frames = [...document.querySelectorAll("iframe")].map((f) => [f, f.getBoundingClientRect()])
-          .filter(([, b]) => b.width > 0 && b.height > 0).sort((a, b) => b[1].width * b[1].height - a[1].width * a[1].height);
-        const keep = frames.length ? frames[0][0] : null;
-        if (!keep) return;
-        document.documentElement.setAttribute("data-odpdf-isolated", "1");
-        for (let el = keep; el && el !== document.documentElement; el = el.parentElement) {
-          for (const sib of el.parentElement ? el.parentElement.children : []) {
-            if (sib === el || sib.tagName === "SCRIPT" || sib.tagName === "STYLE" || sib.tagName === "HEAD") continue;
-            if (!sib.hasAttribute("data-odpdf-hidden")) {
-              sib.setAttribute("data-odpdf-hidden", sib.style.visibility || "");
-              sib.style.setProperty("visibility", "hidden", "important");
-            }
-          }
-        }
-      })()`,
-    }).catch(() => {});
-  }
+  // NOTE: we deliberately do NOT hide the SharePoint chrome ("isolation").
+  // Every capture is clipped to the slide's own rectangle, so the ribbon,
+  // thumbnail rail and status bar are never in the image regardless. Hiding
+  // them made the page look content-only, which made some browsers (Arc)
+  // auto-hide their own toolbar — the "flips into fullscreen every slide"
+  // the user reported. Leaving the chrome in place is invisible to the
+  // output and keeps the view stable.
   return offset;
 }
 
