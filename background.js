@@ -74,6 +74,10 @@ const EXCLUDED_TYPE_PREFIXES = [
   "video/",
   "audio/",
   "text/plain",
+  // The PowerPoint web viewer streams its slide data as large JSON responses
+  // (images.ashx, PowerPoint.ashx). Those are never the downloadable document,
+  // so exclude JSON from the size-based fallback to keep them out of the list.
+  "application/json",
 ];
 
 // Headers worth re-attaching when we re-issue the request ourselves.
@@ -474,7 +478,7 @@ function hookDebuggerDetach() {
 hookDebuggerDetach();
 
 async function beginSlideExport(tabId, frameId, frameUrl) {
-  if (!chrome.debugger) throw new Error("debugger permission not granted (open the extension popup and click Export slides)");
+  if (!chrome.debugger) throw new Error("debugger API unavailable (Chrome/Edge only)");
   hookDebuggerDetach();
   if (!slideExportByTab[tabId]) {
     await attachDebugger(tabId);

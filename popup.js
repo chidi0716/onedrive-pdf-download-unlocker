@@ -322,22 +322,7 @@ function checkSlides(tab) {
   });
 }
 
-// The PDF export captures slides through the debugger API. That permission is
-// optional (requested here, on the click) so installing or updating the
-// extension doesn't need it and users who only download PDFs never see it.
-async function startSlides(withImages) {
-  if (withImages) {
-    let granted = false;
-    try {
-      granted = await chrome.permissions.request({ permissions: ["debugger"] });
-    } catch (e) {
-      granted = false;
-    }
-    if (!granted) {
-      document.getElementById("slidesNote").textContent = tr("slidesNeedPermission");
-      return;
-    }
-  }
+function startSlides(withImages) {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const tab = tabs[0];
     if (!tab) return;
