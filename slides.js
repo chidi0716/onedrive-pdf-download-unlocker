@@ -269,8 +269,11 @@
       if (wrap && wrap.id === want && wrapperHasContent(wrap)) break;
       await sleep(60);
     }
-    const left = Math.max(1200, maxMs - (performance.now() - start));
-    await waitForStable(viewPanel(), 220, left);
+    const left = Math.max(1000, maxMs - (performance.now() - start));
+    // Short quiet window: with the view no longer churning (no stray clicks
+    // into the slide, no blinking caret), the slide settles almost immediately
+    // once its content is in, so we don't need to sit on a long idle tail.
+    await waitForStable(viewPanel(), 140, left);
   }
 
   // Wait until the slide hasn't moved for `quietMs` (the viewer shifts its
@@ -390,22 +393,29 @@
     return !!(a && a !== document.body && a.closest('[role="listbox"], [role="option"]'));
   }
 
-  // Give the thumbnail list keyboard focus at the current slide. Already
-  // focused: nothing to do (re-focusing every step made the browser scroll the
-  // list, which churned the whole viewer — the "keeps switching view" the user
-  // saw). Otherwise focus without scrolling; only if that doesn't take (a
-  // cross-origin frame can refuse focus()) click the already-selected thumbnail
-  // to focus the list, which doesn't change the slide.
-  async function focusThumbList(forceClick) {
-    if (!forceClick && thumbListHasFocus()) return true;
-    const sel = selectedThumb();
-    if (!sel) return false;
-    if (!forceClick) {
-      try { sel.focus({ preventScroll: true }); } catch (e) { /* ignore */ }
+  function listboxEl() {
+    const t = selectedThumb() || thumbnails()[0];
+    return t ? (t.closest('[role="listbox"]') || t.parentElement) : null;
+  }
+
+  // Give the thumbnail list keyboard focus WITHOUT any synthetic click. slides.js
+  // runs inside the viewer's own frame, so a plain in-frame focus() works and
+  // needs no coordinates — unlike a debugger click, which depends on the frame
+  // offset and, when that was off, landed on the slide itself, entered text-edit
+  // mode and made the view flip in and out of presentation (the churn the user
+  // saw, which also kept the caret blinking so the "settled" check never fired,
+  // making it slow). Set a tabindex if the element isn't focusable, and try the
+  // selected thumbnail then the listbox container.
+  function focusThumbList() {
+    if (thumbListHasFocus()) return true;
+    for (const el of [selectedThumb(), listboxEl()]) {
+      if (!el) continue;
+      try {
+        if (!el.hasAttribute("tabindex")) el.setAttribute("tabindex", "-1");
+        el.focus({ preventScroll: true });
+      } catch (e) { /* ignore */ }
       if (thumbListHasFocus()) return true;
     }
-    await clickThumb(sel);
-    await sleep(150);
     return thumbListHasFocus();
   }
 
@@ -428,32 +438,29 @@
     for (let step = 0; step < total + 20 && !arrived(); step++) {
       const cur = current();
       const dist = cur == null ? Infinity : want - cur;
-      let key = null;
+      let key;
       if (want === 1 && cur !== 1) key = "Home";
       else if (want === total && cur !== total && Math.abs(dist) > 3) key = "End";
-      else if (Math.abs(dist) <= 3) key = dist > 0 ? "ArrowDown" : "ArrowUp";
-      if (key && stuck < 2) {
-        // Keep focus in the list (only re-focuses/clicks if it was lost, or if
-        // a previous key did nothing — stuck > 0). Sequential paging therefore
-        // sends bare ArrowDowns with no per-step focus churn.
-        await focusThumbList(stuck > 0);
+      else key = dist > 0 ? "ArrowDown" : "ArrowUp";
+      focusThumbList();
+      if (stuck < 3) {
+        // Keyboard only: keys carry no coordinates, so nothing can land on the
+        // slide and trip text-edit mode. This is the whole navigation path in
+        // the normal case — a bare ArrowDown per slide.
         tries.push(key);
         await send({ type: "SLIDES_INPUT", input: { kind: "key", key } });
       } else {
+        // Keys haven't moved the deck for several tries (focus refused?):
+        // last-resort click on the target thumbnail to re-establish selection.
         tries.push("click");
-        const t = await revealThumb(want, total);
-        if (!(await clickThumb(t))) {
-          // target thumbnail not reachable right now: step with the keyboard
-          await focusThumbList(true);
-          await send({ type: "SLIDES_INPUT", input: { kind: "key", key: dist > 0 ? "ArrowDown" : "ArrowUp" } });
-        }
+        await clickThumb(await revealThumb(want, total));
+        stuck = 0;
       }
       // Slides can take a while to switch on a slow connection; wait for the
       // position to change before deciding the input did nothing.
       const s = performance.now();
-      while (performance.now() - s < 6000 && !arrived() && current() === cur) await sleep(60);
+      while (performance.now() - s < 5000 && !arrived() && current() === cur) await sleep(60);
       stuck = current() === cur ? stuck + 1 : 0;
-      if (stuck >= 4) stuck = 0; // cycle keys -> click -> keys again
     }
     if (arrived()) return true;
     const p = slidePosition();
@@ -533,8 +540,8 @@
     try {
       if (withImages) hideHints(true);
       // Focus the thumbnail list once up front so the whole export navigates by
-      // bare arrow keys, with no per-slide focus/scroll churn.
-      await focusThumbList(false);
+      // bare arrow keys.
+      focusThumbList();
       for (let i = 0; i < n; i++) {
         setStatus(tr("slidesProgress", { i: i + 1, n }));
         let t = performance.now();
@@ -547,9 +554,11 @@
         timings.render += performance.now() - t;
         texts.push(`--- Slide ${i + 1} ---\n${slideTextFrom(wrapperFor(i))}`);
         if (withImages) {
-          // park the mouse outside the slide so no hover tooltip is captured
-          const pb = viewPanel().getBoundingClientRect();
-          await send({ type: "SLIDES_INPUT", input: { kind: "move", x: pb.right - 4, y: pb.bottom - 4 } });
+          setStatus(tr("slidesProgress", { i: i + 1, n }) + " ⤵");
+          // Park the mouse at the top-left corner — off the slide, and away from
+          // the bottom-right status bar (whose presentation button a stray move
+          // could trip) — so no hover tooltip lands in the capture.
+          await send({ type: "SLIDES_INPUT", input: { kind: "move", x: 2, y: 2 } });
           if (bar) bar.style.visibility = "hidden";
           let res = null;
           t = performance.now();
@@ -595,20 +604,25 @@
   // small bar in the viewer shows progress and the result.
   let bar = null;
   let statusEl = null;
-  function setStatus(text) {
-    if (!bar) {
-      bar = document.createElement("div");
-      bar.id = "__odpdf_slides";
-      bar.style.cssText =
-        "position:fixed;left:12px;bottom:40px;z-index:2147483647;pointer-events:none;" +
-        "font:13px/1.3 Segoe UI,system-ui,sans-serif;background:rgba(32,32,32,.92);color:#fff;padding:8px 12px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.3)";
-      statusEl = document.createElement("span");
-      bar.appendChild(statusEl);
-      document.body.appendChild(bar);
-    }
+  function ensureBar() {
+    if (bar) return;
+    bar = document.createElement("div");
+    bar.id = "__odpdf_slides";
+    bar.style.cssText =
+      "position:fixed;left:12px;bottom:40px;max-width:60vw;z-index:2147483647;pointer-events:none;" +
+      "font:13px/1.35 Segoe UI,system-ui,sans-serif;background:rgba(32,32,32,.92);color:#fff;padding:8px 12px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.3);white-space:pre-wrap";
+    statusEl = document.createElement("span");
+    bar.appendChild(statusEl);
+    document.body.appendChild(bar);
+  }
+  function setStatus(text, kind) {
+    ensureBar();
     statusEl.textContent = text;
-    // Also readable from DevTools when troubleshooting.
+    // Colour the bar so a failure is obvious at a glance during testing.
+    bar.style.background = kind === "error" ? "rgba(140,20,20,.95)" : kind === "done" ? "rgba(20,110,50,.95)" : "rgba(32,32,32,.92)";
+    // Also readable from DevTools / a screenshot when troubleshooting.
     document.documentElement.setAttribute("data-odpdf-status", text);
+    console.log("[odpdf] " + text);
   }
 
   let busy = false;
@@ -618,9 +632,12 @@
     setStatus(tr("slidesPreparing"));
     try {
       const { n, secs } = await exportSlides(withImages, setStatus);
-      setStatus(tr(withImages ? "slidesDone" : "slidesTextDone", { n, s: secs }));
+      setStatus(tr(withImages ? "slidesDone" : "slidesTextDone", { n, s: secs }), "done");
     } catch (e) {
-      setStatus(tr("slidesFailed") + (e && e.message ? e.message : e));
+      // Show the full error (and where it happened) so a tester can report it.
+      const msg = (e && e.stack) ? String(e.stack).split("\n").slice(0, 3).join("\n") : (e && e.message ? e.message : String(e));
+      setStatus(tr("slidesFailed") + msg, "error");
+      console.error("[odpdf] export failed", e);
     } finally {
       busy = false;
     }
