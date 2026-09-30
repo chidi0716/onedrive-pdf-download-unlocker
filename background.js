@@ -510,18 +510,25 @@ async function captureSlide(tabId, rect, scale) {
   // Prefer fromSurface:false — it grabs the pixels straight from the renderer
   // instead of the OS window surface, which avoids the per-slide fullscreen
   // flash some browsers (Arc) show when routing through the surface. But not
-  // every browser honours it: if it errors or doesn't answer in time, fall back
-  // to the default surface capture so the export never stalls on a slide.
-  let res;
+  // every browser honours it (Arc rejects it: "Only screenshots from surface
+  // are allowed"). Detect that ONCE per export and use surface capture for the
+  // rest — retrying the rejected mode on every slide wastes time and, on the
+  // first slide, has come back as invalid data.
+  if (st.surfaceOnly) {
+    const res = await shot(true);
+    return res.data;
+  }
   try {
-    res = await Promise.race([
+    const res = await Promise.race([
       shot(false),
       new Promise((_, reject) => setTimeout(() => reject(new Error("fromSurface:false timed out")), 4000)),
     ]);
+    return res.data; // base64 JPEG
   } catch (e) {
-    res = await shot(true);
+    st.surfaceOnly = true; // don't try fromSurface:false again this export
+    const res = await shot(true);
+    return res.data;
   }
-  return res.data; // base64 JPEG
 }
 
 // Trusted input for navigating the viewer: a real click on a thumbnail or a

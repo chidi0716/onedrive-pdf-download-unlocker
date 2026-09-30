@@ -187,15 +187,22 @@
     }
   }
 
-  // Last time the frame fetched anything (pictures and SmartArt graphics are
-  // loaded after the slide's text, so DOM quiet alone isn't enough).
+  // Last time the frame fetched anything, and separately the last time it
+  // fetched an IMAGE (a picture/graphic tile). Pictures load after the slide's
+  // text, so we must wait for them — but only for image fetches: the viewer also
+  // makes periodic non-image background requests (autosave, presence), and
+  // waiting for those to fall quiet would stall every slide (the slow export).
   let lastResourceAt = performance.now();
+  let lastImageFetchAt = 0;
+  const IMG_FETCH_RE = /images\.ashx|\.(png|jpe?g|gif|svg|webp|emf|wmf)(\?|$)/i;
   try {
     new PerformanceObserver((list) => {
       for (const e of list.getEntries()) {
         // background telemetry pings would otherwise never let us settle
         if (/RemoteUls|Telemetry|OneCollector|events\.data\.microsoft|\/collect\b|keepalive/i.test(e.name)) continue;
-        lastResourceAt = Math.max(lastResourceAt, e.responseEnd || performance.now());
+        const at = e.responseEnd || performance.now();
+        lastResourceAt = Math.max(lastResourceAt, at);
+        if (e.initiatorType === "img" || IMG_FETCH_RE.test(e.name)) lastImageFetchAt = Math.max(lastImageFetchAt, at);
       }
     }).observe({ type: "resource", buffered: false });
   } catch (e) {
@@ -300,15 +307,15 @@
       const sig = slideSignature(wrap);
       const same = sig === prevSig;
       prevSig = sig;
-      // Done when nothing is loading and the fingerprint has held steady twice,
-      // once a short floor since the slide appeared has passed — the floor gives
-      // a picture that streams in just after the text time to register in the
-      // fingerprint. There is deliberately NO hard "network idle" gate: the
-      // viewer makes periodic background fetches, so waiting for the network to
-      // fall quiet could stall each slide all the way to the timeout (the slow
-      // export). The fingerprint's image count/loaded count already tracks a
-      // late picture arriving and finishing.
-      if (!pending && same && performance.now() - appeared > 200) {
+      // Wait only on IMAGE fetches, not all network: an image/graphic tile that
+      // just came in (or is about to insert its <img>) means the picture isn't
+      // done yet, even if the current DOM images all report loaded. Non-image
+      // background requests (autosave, presence) are ignored, so text slides and
+      // finished picture slides stay fast — this is what keeps the export quick.
+      const imgQuiet = performance.now() - lastImageFetchAt > 250;
+      // Done: no <img> pending, no recent image fetch, the fingerprint has held
+      // steady twice, and a short floor since the slide appeared has passed.
+      if (!pending && imgQuiet && same && performance.now() - appeared > 200) {
         if (++stable >= 2) break;
       } else {
         stable = 0;
@@ -613,22 +620,32 @@
           // rendered shapes and fonts wrong on real machines, so the screenshot —
           // faithful, though it flashes in Arc — is the reliable path.)
           if (bar) bar.style.visibility = "hidden";
-          let res = null;
-          for (let attempt = 0; attempt < 3; attempt++) {
+          let bytes = null;
+          for (let attempt = 0; attempt < 4; attempt++) {
             let box = currentSlideBox();
             if (!box || box.method === "derived") box = await settledSlideBox();
             if (!box) throw new Error("slide " + (i + 1) + " not found on screen");
             const r = box.rect;
             // devicePixelRatio: the debugger screenshot renders at the display's
             // DPR, so divide it out to keep the output at OUTPUT_WIDTH_PX.
-            res = await send({ type: "SLIDES_CAPTURE", rect: { x: r.left, y: r.top, width: r.width, height: r.height }, scale: OUTPUT_WIDTH_PX / r.width / (window.devicePixelRatio || 1) });
+            const res = await send({ type: "SLIDES_CAPTURE", rect: { x: r.left, y: r.top, width: r.width, height: r.height }, scale: OUTPUT_WIDTH_PX / r.width / (window.devicePixelRatio || 1) });
             if (!res || !res.ok) throw new Error((res && res.error) || "capture failed");
-            const after = currentSlideBox();
-            if (after && sameRect(after.rect, r)) break;
+            const b = b64ToBytes(res.data);
+            // Guard against a bad capture (the first shot of an export has
+            // occasionally come back not-a-JPEG): only accept real JPEG bytes,
+            // otherwise re-shoot this slide rather than poison the PDF.
+            if (b.length > 3 && b[0] === 0xff && b[1] === 0xd8) {
+              const after = currentSlideBox();
+              if (after && sameRect(after.rect, r)) { bytes = b; break; }
+              bytes = b; // usable; loop once more only if the layout moved
+            } else {
+              await sleep(150);
+            }
           }
+          if (!bytes) throw new Error("slide " + (i + 1) + ": capture was not a valid image");
           if (bar) bar.style.visibility = "";
           timings.capture += performance.now() - t;
-          images.push(b64ToBytes(res.data));
+          images.push(bytes);
         }
       }
     } finally {
