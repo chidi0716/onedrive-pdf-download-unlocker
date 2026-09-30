@@ -499,6 +499,22 @@ async function beginSlideExport(tabId, frameId, frameUrl) {
   // auto-hide their own toolbar — the "flips into fullscreen every slide"
   // the user reported. Leaving the chrome in place is invisible to the
   // output and keeps the view stable.
+  //
+  // We DO hide floating notifications/callouts/toasts in the TOP page, though:
+  // the "you don't have permission to edit" toast can render there (outside the
+  // viewer iframe) and overlap the slide's corner, so slides.js hiding them in
+  // its own frame isn't enough. This targets only pop-ups, not the whole page,
+  // so it doesn't trigger the content-only toolbar behaviour.
+  await cdp(tabId, "Runtime.evaluate", {
+    expression: `(() => {
+      let st = document.getElementById("__odpdf_hide_top");
+      if (st) return;
+      st = document.createElement("style");
+      st.id = "__odpdf_hide_top";
+      st.textContent = "[class*=allout],[class*=otification],[class*=oast],[class*=ooltip],[class*=opover],[class*=lyout],[class*=ialog],[role=alert],[role=alertdialog],[role=tooltip]{visibility:hidden !important;}";
+      (document.head || document.documentElement).appendChild(st);
+    })()`,
+  }).catch(() => {});
   return offset;
 }
 
@@ -561,6 +577,8 @@ function endSlideExport(tabId) {
   if (!slideExportByTab[tabId]) return;
   cdp(tabId, "Runtime.evaluate", {
     expression: `(() => {
+      const st = document.getElementById("__odpdf_hide_top");
+      if (st) st.remove();
       for (const el of document.querySelectorAll("[data-odpdf-hidden]")) {
         el.style.visibility = el.getAttribute("data-odpdf-hidden");
         el.removeAttribute("data-odpdf-hidden");

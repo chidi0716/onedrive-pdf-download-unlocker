@@ -180,7 +180,7 @@
         // the capture. They're never part of the slide, so hide them while we
         // export. The capture is clipped to the slide, so this is all that can
         // land on top of it.
-        ".ms-Callout, .ms-Layer, [class*=Callout], [class*=allout], [class*=otification], [class*=oastNotification], [class*=Tooltip], [class*=ooltip], [role=alert], [role=alertdialog], [role=tooltip] { visibility: hidden !important; }";
+        "[class*=allout], [class*=otification], [class*=oast], [class*=ooltip], [class*=opover], [class*=lyout], [class*=ialog], [class*=ms-Layer], [role=alert], [role=alertdialog], [role=tooltip], [role=dialog] { visibility: hidden !important; }";
       document.head.appendChild(st);
     } else if (!on && st) {
       st.remove();
@@ -567,7 +567,7 @@
 
   async function exportSlides(withImages, setStatus, quality) {
     const q = QUALITY[quality] || QUALITY.standard;
-    const OUTPUT_WIDTH_PX = q.width;
+    let OUTPUT_WIDTH_PX = q.width;
     const t0 = performance.now();
     const p0 = slidePosition();
     const n = p0 ? p0.total : thumbnails().length;
@@ -594,6 +594,16 @@
     await sleep(400);
     await waitForStable(viewPanel(), 300, 3000);
     await waitLayoutQuiet(1500, 10000);
+    // Clamp the target width to the display's native resolution for the slide.
+    // The screenshot API renders the clip at `target/(slideWidth*dpr)`; asking
+    // for more pixels than the display natively has (a high preset in a small
+    // window) makes it upscale, which some browsers answer with empty/invalid
+    // data — the "capture was not a valid image" at Max. Never exceed native.
+    if (withImages) {
+      const b0 = currentSlideBox();
+      const native = b0 ? Math.floor(b0.rect.width * (window.devicePixelRatio || 1)) : 0;
+      if (native > 400 && native < OUTPUT_WIDTH_PX) OUTPUT_WIDTH_PX = native;
+    }
     try {
       if (withImages) hideHints(true);
       // Focus the thumbnail list once up front so the whole export navigates by
