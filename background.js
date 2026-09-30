@@ -511,7 +511,7 @@ async function beginSlideExport(tabId, frameId, frameUrl) {
       if (st) return;
       st = document.createElement("style");
       st.id = "__odpdf_hide_top";
-      st.textContent = "[id^=BaseCallout],[role=alertdialog]{visibility:hidden !important;}";
+      st.textContent = "[class*=allout],[class*=beak],[class*=otification],[class*=oast],[class*=ooltip],[role=alert],[role=alertdialog],[role=tooltip]{visibility:hidden !important;}";
       (document.head || document.documentElement).appendChild(st);
     })()`,
   }).catch(() => {});

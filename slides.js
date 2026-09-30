@@ -168,21 +168,22 @@
       // "Click to add ..." prompt text, and the selection overlay layer that
       // draws the dashed outline around empty placeholders (editing chrome,
       // never part of the slide itself).
-      // IMPORTANT: keep these selectors cheap. Attribute *substring* selectors
-      // ([class*=…]) are re-evaluated against every element on the huge
-      // SharePoint/PowerPoint DOM on each style recalc — a pile of them made the
-      // whole browser janky and every capture time out. id-prefix and exact
-      // selectors are cheap; the "no edit permission" toast is a Fluent callout
-      // whose root id starts with "BaseCallout", so that one selector hides the
-      // whole thing (white beak/curtain included).
+      // Hide the notification callout by its VISIBLE PARTS, never its root: the
+      // toast is a Fluent callout (root id BaseCallout…) containing a beak, a
+      // white beakCurtain and the alertdialog text. Hiding the root makes Fluent
+      // think it failed to show and re-create/re-position it forever — a
+      // re-render loop that janks the whole browser and times out every capture.
+      // Hiding the inner pieces (text + beak + curtain) removes it from the
+      // image while the empty root sits harmlessly, so it stays fast.
       st.textContent =
         ".visiblePromptTextContent, .visiblePromptTextContent * { visibility: hidden !important; }" +
         ".ShapeSelectionOverlay { display: none !important; }" +
         // The viewer's own status bar sits just below the slide; hide it so a
         // slightly tall capture rect can't catch it.
         "#WACStatusBarContainer, [id^=StatusBar] { visibility: hidden !important; }" +
-        // Floating notification callout (overlaps the slide corner otherwise).
-        "[id^=BaseCallout], [role=alertdialog] { visibility: hidden !important; }";
+        // The callout's visible parts: text (calloutMain → *allout), the white
+        // curtain and the beak, plus other toast/tooltip shapes.
+        "[class*=allout], [class*=beak], [class*=otification], [class*=oast], [class*=ooltip], [role=alert], [role=alertdialog], [role=tooltip] { visibility: hidden !important; }";
       document.head.appendChild(st);
     } else if (!on && st) {
       st.remove();
