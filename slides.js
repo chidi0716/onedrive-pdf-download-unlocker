@@ -545,68 +545,6 @@
   const OUTPUT_WIDTH_PX = 1600;
   const PAGE_WIDTH_PT = 960;
 
-  // Render the current slide to a JPEG in the page itself, WITHOUT the debugger
-  // screenshot API. We clone the slide's container, bake every element's
-  // computed style inline (so the viewer's external CSS is captured), inline its
-  // images as data URLs, wrap it in an <svg><foreignObject>, and draw that into
-  // a <canvas>. This never touches the OS window surface, so it can't cause the
-  // per-slide fullscreen flash the debugger screenshot does in some browsers
-  // (Arc), and it captures only the slide element — never an overlapping
-  // notification. Throws if the browser taints the canvas (then the caller falls
-  // back to the debugger screenshot). Fonts: the SVG image renders in "secure
-  // static" mode, which can't fetch the viewer's web fonts, so text falls back
-  // to a matching system font (CJK, drawn with the OS font, is unaffected).
-  async function drawSlideToJpeg(box) {
-    const wrap = [...document.querySelectorAll("[id^=PageContentSizeWrapper]")].find((w) => w.getBoundingClientRect().width > 0);
-    if (!wrap) throw new Error("no slide element to draw");
-    const W = Math.max(1, Math.round(box.width)), H = Math.max(1, Math.round(box.height));
-    const clone = wrap.cloneNode(true);
-    // Bake computed styles onto every node (external CSS won't apply otherwise).
-    const srcEls = [wrap, ...wrap.querySelectorAll("*")];
-    const clEls = [clone, ...clone.querySelectorAll("*")];
-    for (let i = 0; i < srcEls.length && i < clEls.length; i++) {
-      if (!clEls[i].setAttribute) continue;
-      const cs = getComputedStyle(srcEls[i]);
-      let t = "";
-      for (let j = 0; j < cs.length; j++) { const p = cs[j]; t += p + ":" + cs.getPropertyValue(p) + ";"; }
-      clEls[i].setAttribute("style", t);
-    }
-    // Editing chrome that must never be in the image.
-    for (const el of clone.querySelectorAll(".visiblePromptTextContent, .ShapeSelectionOverlay")) el.style.visibility = "hidden";
-    // Inline images (same-origin tiles/pictures) as data URLs.
-    for (const im of clone.querySelectorAll("img")) {
-      try {
-        const o = new Image();
-        o.src = im.src;
-        await o.decode().catch(() => {});
-        if (!o.naturalWidth) continue;
-        const c = document.createElement("canvas");
-        c.width = o.naturalWidth; c.height = o.naturalHeight;
-        c.getContext("2d").drawImage(o, 0, 0);
-        im.setAttribute("src", c.toDataURL("image/png"));
-      } catch (e) { /* leave as-is; may drop out in secure mode */ }
-    }
-    // Shift the clone so the slide box's top-left sits at (0,0); the foreignObject
-    // clips anything outside W×H.
-    const sb = wrap.getBoundingClientRect();
-    clone.style.transform = "translate(" + (sb.left - box.left) + "px," + (sb.top - box.top) + "px)";
-    clone.style.margin = "0";
-    const xml = new XMLSerializer().serializeToString(clone);
-    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H + '"><foreignObject x="0" y="0" width="' + W + '" height="' + H + '">' + xml + "</foreignObject></svg>";
-    const scale = OUTPUT_WIDTH_PX / W;
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(W * scale); canvas.height = Math.round(H * scale);
-    const ctx = canvas.getContext("2d");
-    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.scale(scale, scale);
-    const img = new Image();
-    img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
-    await img.decode();
-    ctx.drawImage(img, 0, 0);
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.85); // throws if tainted
-    return b64ToBytes(dataUrl.split(",")[1]);
-  }
-
   async function exportSlides(withImages, setStatus) {
     const t0 = performance.now();
     const p0 = slidePosition();
@@ -660,28 +598,26 @@
         if (withImages) {
           setStatus(tr("slidesProgress", { i: i + 1, n }) + " ⤵");
           t = performance.now();
-          let box = currentSlideBox();
-          if (!box || box.method === "derived") box = await settledSlideBox();
-          if (!box) throw new Error("slide " + (i + 1) + " not found on screen");
-          const r = box.rect;
-          let bytes = null;
-          // Primary: draw the slide in-page (no screenshot API → no flash, no
-          // overlapping notification). Fall back to the debugger screenshot only
-          // if drawing fails (e.g. the canvas gets tainted).
-          try {
-            bytes = await drawSlideToJpeg(r);
-          } catch (e) {
-            console.warn("[odpdf] draw failed, using screenshot:", e && e.message);
-            if (bar) bar.style.visibility = "hidden";
+          // Capture via the debugger screenshot. (An in-page draw was tried but
+          // rendered shapes and fonts wrong on real machines, so the screenshot —
+          // faithful, though it flashes in Arc — is the reliable path.)
+          if (bar) bar.style.visibility = "hidden";
+          let res = null;
+          for (let attempt = 0; attempt < 3; attempt++) {
+            let box = currentSlideBox();
+            if (!box || box.method === "derived") box = await settledSlideBox();
+            if (!box) throw new Error("slide " + (i + 1) + " not found on screen");
+            const r = box.rect;
             // devicePixelRatio: the debugger screenshot renders at the display's
             // DPR, so divide it out to keep the output at OUTPUT_WIDTH_PX.
-            const res = await send({ type: "SLIDES_CAPTURE", rect: { x: r.left, y: r.top, width: r.width, height: r.height }, scale: OUTPUT_WIDTH_PX / r.width / (window.devicePixelRatio || 1) });
-            if (bar) bar.style.visibility = "";
+            res = await send({ type: "SLIDES_CAPTURE", rect: { x: r.left, y: r.top, width: r.width, height: r.height }, scale: OUTPUT_WIDTH_PX / r.width / (window.devicePixelRatio || 1) });
             if (!res || !res.ok) throw new Error((res && res.error) || "capture failed");
-            bytes = b64ToBytes(res.data);
+            const after = currentSlideBox();
+            if (after && sameRect(after.rect, r)) break;
           }
+          if (bar) bar.style.visibility = "";
           timings.capture += performance.now() - t;
-          images.push(bytes);
+          images.push(b64ToBytes(res.data));
         }
       }
     } finally {
