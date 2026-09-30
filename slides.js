@@ -634,7 +634,15 @@
         // sits over the thumbnail rail, which is outside every slide clip.
         await send({ type: "SLIDES_INPUT", input: { kind: "move", x: 5, y: Math.round(window.innerHeight / 2) } });
       }
-      dismissNotification();
+      // Clear the "no edit permission" toast up front. It appears once, right
+      // after the doc opens, so poll briefly to catch it if it lands a beat late,
+      // then stop — hammering querySelectorAll on this huge DOM every slide is
+      // pure waste once the toast is gone.
+      let notifCleared = false;
+      for (let a = 0; a < 6 && !notifCleared; a++) {
+        if (dismissNotification()) notifCleared = true;
+        else await sleep(100);
+      }
       for (let i = 0; i < n; i++) {
         setStatus(tr("slidesProgress", { i: i + 1, n }));
         let t = performance.now();
@@ -650,8 +658,13 @@
           setStatus(tr("slidesProgress", { i: i + 1, n }) + " ⤵");
           t = performance.now();
           // Dismiss the "no edit permission" toast if it's up, so it isn't in
-          // the capture (clicking it away, not CSS-hiding it — see above).
-          if (dismissNotification()) await sleep(60);
+          // the capture (clicking it away, not CSS-hiding it — see above). Only
+          // keep probing until we've cleared it once; after that it's gone and
+          // re-scanning the DOM every slide just slows the export.
+          if (!notifCleared && dismissNotification()) {
+            notifCleared = true;
+            await sleep(60);
+          }
           // Capture via the debugger screenshot. (An in-page draw was tried but
           // rendered shapes and fonts wrong on real machines, so the screenshot —
           // faithful, though it flashes in Arc — is the reliable path.)
