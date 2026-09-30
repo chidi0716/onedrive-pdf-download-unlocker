@@ -292,22 +292,33 @@
       await sleep(50);
     }
     if (!wrap) return;
+    const appeared = performance.now();
     let prevSig = null, stable = 0;
     while (performance.now() - start < maxMs) {
       const imgs = [...wrap.querySelectorAll("img")];
       const pending = imgs.some((i) => !i.complete || i.naturalWidth === 0);
-      const quiet = performance.now() - lastResourceAt > 180; // no tile/graphic fetch lately
       const sig = slideSignature(wrap);
       const same = sig === prevSig;
       prevSig = sig;
-      if (!pending && quiet && same) {
-        if (++stable >= 2) break; // confirmed done across two checks
+      // Done when nothing is loading and the fingerprint has held steady twice,
+      // once a short floor since the slide appeared has passed — the floor gives
+      // a picture that streams in just after the text time to register in the
+      // fingerprint. There is deliberately NO hard "network idle" gate: the
+      // viewer makes periodic background fetches, so waiting for the network to
+      // fall quiet could stall each slide all the way to the timeout (the slow
+      // export). The fingerprint's image count/loaded count already tracks a
+      // late picture arriving and finishing.
+      if (!pending && same && performance.now() - appeared > 200) {
+        if (++stable >= 2) break;
       } else {
         stable = 0;
       }
-      await sleep(90);
+      await sleep(60);
     }
-    if (document.fonts && document.fonts.status !== "loaded") await document.fonts.ready.catch(() => {});
+    // Wait for fonts, but never hang: some viewer fonts never report "loaded".
+    if (document.fonts && document.fonts.status !== "loaded") {
+      await Promise.race([document.fonts.ready.catch(() => {}), sleep(200)]);
+    }
     await nextFrame();
   }
 
@@ -592,7 +603,7 @@
         t = performance.now();
         // Wait for the target slide to actually be shown and rendered (guards
         // against blank/duplicate captures) before capturing.
-        await waitSlideReady(i, 8000);
+        await waitSlideReady(i, 5000);
         timings.render += performance.now() - t;
         texts.push(`--- Slide ${i + 1} ---\n${slideTextFrom(wrapperFor(i))}`);
         if (withImages) {
