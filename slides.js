@@ -180,7 +180,10 @@
         // the capture. They're never part of the slide, so hide them while we
         // export. The capture is clipped to the slide, so this is all that can
         // land on top of it.
-        "[class*=allout], [class*=otification], [class*=oast], [class*=ooltip], [class*=opover], [class*=lyout], [class*=ialog], [class*=ms-Layer], [role=alert], [role=alertdialog], [role=tooltip], [role=dialog] { visibility: hidden !important; }";
+        // Hide the whole Fluent callout by its root id (BaseCallout…) so the
+        // white beak/curtain goes too — not just the text (calloutMain) — plus
+        // other notification/toast/tooltip/popover/dialog shapes.
+        "[id^=BaseCallout], [id^=Callout], [class*=allout], [class*=otification], [class*=oast], [class*=ooltip], [class*=opover], [class*=lyout], [class*=ialog], [class*=ms-Layer], [role=alert], [role=alertdialog], [role=tooltip], [role=dialog] { visibility: hidden !important; }";
       document.head.appendChild(st);
     } else if (!on && st) {
       st.remove();
