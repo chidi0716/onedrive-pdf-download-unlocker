@@ -12,6 +12,10 @@
   - 以 Chrome debugger API 擷取，匯出期間 Chrome 會顯示「正在對這個瀏覽器進行偵錯」提示列，因此需要 `debugger` 權限（beta.3 起改為選用權限，第一次匯出 PDF 時才詢問）。
   - 匯出時會隱藏「按一下以新增…」提示字與空白預留位置的虛線框。
 
+### 修正（beta.21）
+
+- **修正 beta.19/20 造成的整個瀏覽器卡頓與匯出超慢**：隱藏通知用的 `[class*=…]` 子字串選擇器在龐大的 SharePoint/PowerPoint DOM 上會不斷觸發昂貴的樣式重算，拖垮整個瀏覽器、也讓每張截圖都等到逾時。改為只用最省的精準選擇器——以 Fluent Callout 根節點 id `[id^=BaseCallout]`（連白框一起）加上 `[role=alertdialog]`，其餘廣泛比對全部移除。速度回復。
+
 ### 修正（beta.20）
 
 - **徹底藏掉右上角通知框**：先前只藏到通知的文字內容，但白色底框（Fluent Callout 的 beak/curtain）仍被截到。改為以根節點 id（`BaseCallout…`）整個隱藏，連白框與箭頭一起藏，檢視器層與 SharePoint 上層頁面都套用。

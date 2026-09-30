@@ -168,22 +168,21 @@
       // "Click to add ..." prompt text, and the selection overlay layer that
       // draws the dashed outline around empty placeholders (editing chrome,
       // never part of the slide itself).
+      // IMPORTANT: keep these selectors cheap. Attribute *substring* selectors
+      // ([class*=…]) are re-evaluated against every element on the huge
+      // SharePoint/PowerPoint DOM on each style recalc — a pile of them made the
+      // whole browser janky and every capture time out. id-prefix and exact
+      // selectors are cheap; the "no edit permission" toast is a Fluent callout
+      // whose root id starts with "BaseCallout", so that one selector hides the
+      // whole thing (white beak/curtain included).
       st.textContent =
         ".visiblePromptTextContent, .visiblePromptTextContent * { visibility: hidden !important; }" +
         ".ShapeSelectionOverlay { display: none !important; }" +
-        // The viewer's own status bar sits just below the slide; if a capture
-        // rect is ever a touch too tall it would appear at the image's bottom.
-        // Hide it (and the bottom toolbar) for the duration of the capture.
-        "#WACStatusBarContainer, [id^=StatusBar], [class*=StatusBarContainer], [class*=DocumentStatusBar] { visibility: hidden !important; }" +
-        // Floating notifications / callouts / tooltips (e.g. the "you don't have
-        // permission to edit" toast) can overlap the slide's corner and get into
-        // the capture. They're never part of the slide, so hide them while we
-        // export. The capture is clipped to the slide, so this is all that can
-        // land on top of it.
-        // Hide the whole Fluent callout by its root id (BaseCallout…) so the
-        // white beak/curtain goes too — not just the text (calloutMain) — plus
-        // other notification/toast/tooltip/popover/dialog shapes.
-        "[id^=BaseCallout], [id^=Callout], [class*=allout], [class*=otification], [class*=oast], [class*=ooltip], [class*=opover], [class*=lyout], [class*=ialog], [class*=ms-Layer], [role=alert], [role=alertdialog], [role=tooltip], [role=dialog] { visibility: hidden !important; }";
+        // The viewer's own status bar sits just below the slide; hide it so a
+        // slightly tall capture rect can't catch it.
+        "#WACStatusBarContainer, [id^=StatusBar] { visibility: hidden !important; }" +
+        // Floating notification callout (overlaps the slide corner otherwise).
+        "[id^=BaseCallout], [role=alertdialog] { visibility: hidden !important; }";
       document.head.appendChild(st);
     } else if (!on && st) {
       st.remove();
