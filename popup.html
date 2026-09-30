@@ -7,12 +7,47 @@
   :root {
     --accent: #2563eb;
     --accent-dark: #1d4ed8;
+    --accent-soft: #eef2ff;
     --ink: #1f2328;
     --muted: #6b7280;
     --border: #e5e7eb;
+    --card: #ffffff;
+    --bg: #ffffff;
     --bg-soft: #f7f7f8;
     --ok: #1a8754;
+    --ok-soft: #e7f6ec;
     --warn: #c2410c;
+    --warn-soft: #fff1e6;
+    --ppt: #c43e1c;
+    --ppt-ink: #a33a17;
+    --ppt-soft: #fff6f2;
+    --ppt-border: #f1c4b4;
+    --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 2px 8px rgba(0,0,0,0.05);
+    --ring: rgba(37,99,235,0.35);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --accent: #4f8cff;
+      --accent-dark: #6ea0ff;
+      --accent-soft: #1c2740;
+      --ink: #e8eaed;
+      --muted: #9aa1ad;
+      --border: #2a2f37;
+      --card: #1b1e24;
+      --bg: #141619;
+      --bg-soft: #1b1e24;
+      --ok: #4ade80;
+      --ok-soft: #14301f;
+      --warn: #fb923c;
+      --warn-soft: #33210f;
+      --ppt: #e8623d;
+      --ppt-ink: #f0a184;
+      --ppt-soft: #2a1712;
+      --ppt-border: #52281b;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 2px 10px rgba(0,0,0,0.4);
+      --ring: rgba(79,140,255,0.45);
+    }
   }
 
   * { box-sizing: border-box; }
@@ -23,25 +58,28 @@
     padding: 0;
     margin: 0;
     color: var(--ink);
-    background: #fff;
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
   }
+
+  :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 
   header {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 14px 16px 10px;
+    gap: 9px;
+    padding: 14px 16px 12px;
     background: linear-gradient(135deg, var(--accent), var(--accent-dark));
     color: #fff;
   }
 
   header img { width: 22px; height: 22px; flex-shrink: 0; }
-  header h1 { font-size: 14px; margin: 0; font-weight: 600; line-height: 1.3; flex: 1; }
+  header h1 { font-size: 14px; margin: 0; font-weight: 600; line-height: 1.3; flex: 1; letter-spacing: 0.2px; }
 
   #langSelect {
     flex-shrink: 0;
     font-size: 11px;
-    padding: 3px 5px;
+    padding: 3px 6px;
     border-radius: 6px;
     border: 1px solid rgba(255,255,255,0.55);
     background: rgba(255,255,255,0.15);
@@ -54,16 +92,16 @@
 
   details.help {
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 10px;
     background: var(--bg-soft);
-    margin-bottom: 10px;
+    margin-bottom: 12px;
     padding: 0;
     overflow: hidden;
   }
   details.help summary {
     cursor: pointer;
     list-style: none;
-    padding: 8px 10px;
+    padding: 9px 11px;
     font-size: 12.5px;
     font-weight: 600;
     color: var(--ink);
@@ -78,9 +116,9 @@
 
   .help ol {
     margin: 0;
-    padding: 0 10px 10px 26px;
+    padding: 0 11px 11px 28px;
     font-size: 12px;
-    color: #444;
+    color: var(--muted);
     line-height: 1.7;
   }
   .help li { margin-bottom: 2px; }
@@ -88,35 +126,35 @@
 
   #refresh {
     width: 100%;
-    padding: 9px;
+    padding: 10px;
     margin-bottom: 12px;
     cursor: pointer;
     background: var(--accent);
     color: #fff;
     border: none;
-    border-radius: 8px;
+    border-radius: 9px;
     font-size: 13px;
     font-weight: 600;
-    transition: background 0.15s ease;
+    transition: background 0.15s ease, transform 0.1s ease;
   }
   #refresh:hover { background: var(--accent-dark); }
-  #refresh:active { transform: scale(0.99); }
+  #refresh:active { transform: scale(0.985); }
 
   .item {
     border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 10px 12px;
+    border-radius: 11px;
+    padding: 11px 12px;
     margin-bottom: 10px;
-    background: #fff;
-    transition: box-shadow 0.15s ease;
+    background: var(--card);
+    transition: box-shadow 0.15s ease, border-color 0.15s ease;
   }
-  .item:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+  .item:hover { box-shadow: var(--shadow); border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
 
   .item .row-top {
     display: flex;
     align-items: flex-start;
     gap: 8px;
-    margin-bottom: 6px;
+    margin-bottom: 7px;
   }
   .item .file-icon { font-size: 18px; line-height: 1.2; flex-shrink: 0; }
   .item .filename {
@@ -124,38 +162,40 @@
     font-weight: 600;
     word-break: break-all;
     line-height: 1.4;
+    color: var(--ink);
   }
 
-  .badges { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
+  .badges { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 9px; }
   .badge {
     display: inline-flex;
     align-items: center;
     gap: 3px;
     font-size: 10.5px;
-    padding: 2px 7px;
+    padding: 2px 8px;
     border-radius: 999px;
     font-weight: 600;
     white-space: nowrap;
   }
-  .badge.match { background: #eef0fd; color: var(--accent-dark); }
-  .badge.large { background: #eef2ff; color: #3730a3; }
+  .badge.match { background: var(--accent-soft); color: var(--accent-dark); }
+  .badge.large { background: var(--accent-soft); color: var(--accent-dark); }
   .badge.size { background: var(--bg-soft); color: var(--muted); }
-  .badge.auth-ok { background: #e7f6ec; color: var(--ok); }
-  .badge.auth-bad { background: #fff1e6; color: var(--warn); }
+  .badge.auth-ok { background: var(--ok-soft); color: var(--ok); }
+  .badge.auth-bad { background: var(--warn-soft); color: var(--warn); }
 
   .item button {
     width: 100%;
-    padding: 7px;
+    padding: 8px;
     cursor: pointer;
-    background: #fff;
+    background: var(--card);
     color: var(--accent);
     border: 1px solid var(--accent);
-    border-radius: 7px;
+    border-radius: 8px;
     font-size: 12.5px;
     font-weight: 600;
-    transition: all 0.15s ease;
+    transition: background 0.15s ease, color 0.15s ease, transform 0.1s ease;
   }
   .item button:hover:not(:disabled) { background: var(--accent); color: #fff; }
+  .item button:active:not(:disabled) { transform: scale(0.985); }
   .item button:disabled { opacity: 0.6; cursor: default; }
   .item:first-of-type button {
     background: var(--accent);
@@ -167,45 +207,70 @@
     font-size: 12.5px;
     color: var(--muted);
     text-align: center;
-    padding: 28px 10px;
+    padding: 30px 12px;
     line-height: 1.7;
   }
-  #empty .empty-icon { font-size: 26px; display: block; margin-bottom: 6px; }
+  #empty .empty-icon { font-size: 28px; display: block; margin-bottom: 8px; }
 
   footer {
     font-size: 10.5px;
     color: var(--muted);
     text-align: center;
-    padding: 8px 12px 12px;
+    padding: 10px 12px 12px;
     border-top: 1px solid var(--border);
     margin-top: 4px;
   }
+
   /* PowerPoint slide export */
   #slidesBox {
-    border: 1px solid #f1c4b4;
-    background: #fff6f2;
-    border-radius: 8px;
-    padding: 10px;
-    margin-bottom: 10px;
+    border: 1px solid var(--ppt-border);
+    background: var(--ppt-soft);
+    border-left: 3px solid var(--ppt);
+    border-radius: 10px;
+    padding: 11px 12px;
+    margin-bottom: 12px;
   }
-  #slidesBox .slides-head { font-weight: 600; color: #a33a17; margin-bottom: 6px; }
+  #slidesBox .slides-head {
+    font-weight: 600;
+    color: var(--ppt-ink);
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12.5px;
+  }
+  #slidesBox .slides-head::before { content: "📊"; }
   #slidesBox .slides-row { display: flex; gap: 6px; }
   #slidesBox button {
     flex: 1;
-    padding: 7px 8px;
-    border-radius: 6px;
-    border: 1px solid #c43e1c;
-    background: #c43e1c;
+    padding: 8px;
+    border-radius: 8px;
+    border: 1px solid var(--ppt);
+    background: var(--ppt);
     color: #fff;
     font-weight: 600;
+    font-size: 12.5px;
+    cursor: pointer;
+    transition: filter 0.15s ease, transform 0.1s ease;
+  }
+  #slidesBox button:hover:not(:disabled) { filter: brightness(0.94); }
+  #slidesBox button:active:not(:disabled) { transform: scale(0.985); }
+  #slidesBox button.secondary { flex: 0 0 auto; min-width: 72px; background: transparent; color: var(--ppt-ink); }
+  #slidesBox button.secondary:hover:not(:disabled) { background: color-mix(in srgb, var(--ppt) 12%, transparent); filter: none; }
+  #slidesBox button:disabled { opacity: 0.55; cursor: default; }
+  #slidesBox .slides-note { margin-top: 8px; font-size: 11px; color: var(--muted); line-height: 1.55; }
+  #slidesBox .slides-quality { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12px; }
+  #slidesBox .slides-quality label { color: var(--ppt-ink); font-weight: 600; }
+  #slidesBox .slides-quality select {
+    flex: 1;
+    padding: 5px 6px;
+    border: 1px solid var(--ppt-border);
+    border-radius: 6px;
+    font-size: 12px;
+    background: var(--card);
+    color: var(--ink);
     cursor: pointer;
   }
-  #slidesBox button.secondary { background: #fff; color: #c43e1c; }
-  #slidesBox button:disabled { opacity: 0.6; cursor: default; }
-  #slidesBox .slides-note { margin-top: 6px; font-size: 11px; color: var(--muted); }
-  #slidesBox .slides-quality { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 12px; }
-  #slidesBox .slides-quality label { color: var(--muted); }
-  #slidesBox .slides-quality select { flex: 1; padding: 3px 4px; border: 1px solid rgba(0,0,0,0.2); border-radius: 4px; font-size: 12px; }
 </style>
 </head>
 <body>

@@ -2,11 +2,13 @@
 
 # OneDrive / SharePoint PDF Download Unlocker (Browser Extension)
 
-Last updated: 2026-09-24 (version 1.1.0)
+Last updated: 2026-09-30 (version 1.2.0)
 
 ## What this is
 
 A browser extension (Manifest V3) for Chrome, Edge, and Firefox that bypasses OneDrive / SharePoint's "preview only, no download" restriction and saves the PDF to your computer in one click.
+
+Since **1.2.0** it also exports **PowerPoint-for-web slides** (Chrome / Edge): it captures a "view-only / block-download" — or even sensitivity-labelled — deck slide by slide into an image-based PDF (plus a text file). See the "PowerPoint slide export" section below.
 
 ### The problem
 
@@ -43,6 +45,8 @@ Not published on any store yet — install it as an unpacked / temporary extensi
 4. Click "Load unpacked" and select the unzipped folder (it should contain `manifest.json` directly).
 5. Once installed, open an OneDrive / SharePoint PDF preview page to test — you should see the floating download button appear.
 
+> Note: the extension declares the `debugger` permission (needed for high-resolution PowerPoint slide capture). Chrome / Edge will ask you to confirm it on install or update (an update may disable the extension until you click "Enable"). While exporting slides, the browser shows a "is debugging this browser" bar — this is normal.
+
 ### Firefox (temporary load)
 
 Firefox uses a separate package (`onedrive-pdf-download-unlocker-firefox.zip`) because it needs a different `background` manifest key than Chrome. The zip already ships the correct `manifest.json`, so just:
@@ -70,6 +74,35 @@ It packages the Chrome zip from `manifest.json` and the Firefox zip with `manife
 - Once a candidate file is detected, a floating `position: fixed` download button appears on the page, positioned live via `getBoundingClientRect()` near the toolbar or the native download button, without overlapping the native UI.
 - Clicking the button saves the captured content straight to the Downloads folder under its original filename.
 
+## PowerPoint slide export (Chrome / Edge)
+
+Beyond PDF downloads, 1.2.0 adds exporting decks opened in **PowerPoint for the web** — ideal for "view-only / block-download" or sensitivity-labelled decks where you can't get the original `.pptx` (e.g. a teacher archiving locked lesson slides).
+
+### How to use
+
+1. Open the deck in PowerPoint for the web (the `officeapps.live.com` viewer, or a PowerPoint link on SharePoint).
+2. Start it either way:
+   - the orange **"Export slides (PDF)"** button at the bottom-right of the page; or
+   - click the extension icon, pick a quality in the popup, and press **"Export slides (PDF)"** — press **"Text"** for text only.
+3. Progress shows at the bottom-left of the viewer. When done, two files land in your Downloads folder: an image-based PDF and a `.txt` of each slide's text.
+
+### Highlights
+
+- **Faithful layout**: captures the actual rendered slide at high resolution, so text (CJK included), shapes, tables and charts sit exactly where they do online.
+- **Selectable, remembered quality**: Standard (1600px, small file), High (2000px), Max (2560px, near-print — automatically capped at your display's native resolution to avoid upscaling artefacts).
+- **No clutter in the capture**: hides the "Click to add…" placeholder prompts and dashed boxes, and dismisses the "you don't have permission to edit" toast so it isn't captured.
+- **Keyboard navigation, capture-when-ready**: advances slide by slide with arrow keys and waits for each slide to finish rendering (images included) before capturing, avoiding torn or skipped slides.
+
+### The `debugger` permission
+
+High-resolution capture goes through Chrome's debugger API, so the extension declares the `debugger` permission. While exporting, Chrome shows a "is debugging this browser" bar at the top — this is **expected and required**, and disappears when the export finishes.
+
+### Notes
+
+- **Arc** only allows "from-surface" screenshots, so each capture briefly flashes the window in and out of fullscreen. That's an Arc limitation — **Chrome / Edge don't flash**, so prefer them for exporting.
+- **Firefox is not supported** for slide export (no debugger API); PDF download still works.
+- If you also have a "force enable right-click / copy" extension installed (e.g. *Absolute Enable Right Click & Copy*), it constantly re-scans PowerPoint-for-web's ever-changing DOM and drags down the whole browser and the export — disable it while exporting.
+
 ## Features
 
 1. **Multi-language UI**: defaults to English, switchable to Chinese in the popup, applied instantly.
@@ -83,6 +116,7 @@ It packages the Chrome zip from `manifest.json` and the Firefox zip with `manife
 9. **Fixed a feedback loop where the floating button "drifted downward" on its own**: the selector used to find the page's "native download button" could previously mistake the extension's own injected button for a native one (because its own `aria-label` text also contains the word "Download"), causing each reposition pass to use itself as the anchor and drift further down without stopping. The selector now explicitly excludes the extension's own injected node.
 10. **Large files are no longer capped at 64 MiB** (issue #1): files over 8 MB are handed from the background script to the page in 8 MB chunks instead of one giant message, so the browser's ~64 MiB message limit no longer applies (tested up to 400 MB).
 11. **Works on Chrome, Edge and Firefox**: Firefox uses its own package (see Installation) with the background-script setup Firefox requires.
+12. **PowerPoint slide export (Chrome / Edge)**: captures view-only / block-download decks slide by slide into an image-based PDF plus a text file, with selectable quality, started from an on-page button or the popup (see the section above).
 
 ## File structure
 
@@ -92,7 +126,9 @@ It packages the Chrome zip from `manifest.json` and the Firefox zip with `manife
 - `background.js` - listens to network requests, detects candidate files, handles same-tab file-switch reset (with debounce logic), and streams large downloads in chunks
 - `content.js` - injects the floating download button into the page, including positioning, theme detection, accessibility, and close-button visibility logic
 - `i18n.js` - Chinese/English string dictionary + language persistence
-- `popup.js` / `popup.html` - the popup shown when clicking the extension icon (language switcher, list of candidate files)
+- `popup.js` / `popup.html` - the popup shown when clicking the extension icon (language switcher, candidate file list, slide export + quality options)
+- `slides.js` - the PowerPoint-for-web slide export core (keyboard navigation, render waiting, per-slide capture, text extraction)
+- `slidepdf.js` - assembles the captured JPEGs into an image-based PDF
 - `icons/` - extension icons
 - `PRIVACY.md` - bilingual (Chinese/English) privacy policy
 - `LICENSE` - MIT license
@@ -104,11 +140,12 @@ Source code lives directly in this repo's root. Every release also gets packaged
 
 ## Delivery status
 
-Current version: **1.1.0**.
+Current version: **1.2.0**.
 
 - All `.js` files pass syntax checks and load/execute without errors.
+- **PowerPoint slide export (new in 1.2.0):** developed and tuned across many rounds of real-device testing (macOS + Arc / Chrome) since beta.1. Keyboard navigation, render waiting, per-slide capture and PDF/text output are verified on a 50-slide deck; all three quality presets and the on-page button trigger are verified.
 - **Large-file download (issue #1):** tested end-to-end in Chromium against a mock SharePoint server that requires the `X-SPOPacToken` header, via both the floating button and the popup, at 8 MB, just over 8 MB, 70 MB, 150 MB and 400 MB. Every download came out byte-for-byte identical to the original. The same 70 MB test hangs on v1.0.0, which reproduces the original bug.
-- **Firefox (issue #2):** confirmed working by the user who requested it.
+- **Firefox (issue #2):** confirmed working by the user who requested it (slide export excepted — not supported on Firefox).
 - Please report problems (browser, file size, what happened) via Issues.
 
 The v1.0.0 release remains available on the [Releases](../../releases) page as a fallback.
@@ -121,3 +158,5 @@ This project is licensed under the [MIT License](./LICENSE).
 
 - Currently only covers Microsoft's global commercial cloud (`*.sharepoint.com` etc.), not sovereign clouds (`.sharepoint.us` / `.cn` / `.de`). May need additions if you're on a different tenant environment in the future.
 - Detection relies on URL keyword matching; if Microsoft changes the URL format of these endpoints in the future, `URL_KEYWORDS` (in `background.js`) may need updating.
+- Slide export flashes fullscreen on each capture in Arc (Arc only allows from-surface screenshots); Chrome / Edge don't. Firefox doesn't support slide export.
+- Slide export currently produces an image-based PDF, with text saved separately as `.txt`. **Planned (next release):** a selectable/copyable invisible text layer, and higher-than-native output via `deviceScaleFactor` (dsf).

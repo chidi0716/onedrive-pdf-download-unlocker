@@ -607,6 +607,34 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendResponse({ ok: true });
     return;
   }
+  // content.js (top frame) can't reach the viewer frame directly, so it asks
+  // the background to relay a ping to every frame; only the ready PowerPoint
+  // viewer frame (slides.js) answers. Used to decide whether to show the
+  // on-page "export slides" button instead of the PDF-download one.
+  if (msg && msg.type === "SLIDES_QUERY") {
+    const tabId = sender.tab && sender.tab.id;
+    if (tabId == null) { sendResponse(null); return; }
+    chrome.tabs.sendMessage(tabId, { type: "SLIDES_PING" }, (resp) => {
+      void chrome.runtime.lastError;
+      sendResponse(resp || null);
+    });
+    return true; // async
+  }
+  // Start the slide export from the on-page button: relay SLIDES_RUN to the
+  // viewer frame (same message the popup sends).
+  if (msg && msg.type === "SLIDES_START") {
+    const tabId = sender.tab && sender.tab.id;
+    if (tabId == null) { sendResponse({ ok: false }); return; }
+    chrome.tabs.sendMessage(
+      tabId,
+      { type: "SLIDES_RUN", withImages: !!msg.withImages, quality: msg.quality },
+      (resp) => {
+        void chrome.runtime.lastError;
+        sendResponse(resp || { ok: true });
+      }
+    );
+    return true; // async
+  }
   if (msg && msg.type === "GET_CANDIDATES") {
     // popup.js 會帶 tabId 過來；content.js 是從分頁內部送訊息，沒有帶
     // tabId，這時改用 sender.tab.id（背景能看到訊息是哪個分頁送來的）。

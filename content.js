@@ -61,6 +61,15 @@
   let noCandidateTimerId = null;
   const NO_CANDIDATE_GRACE_MS = 3000; // 給偵測一點時間，避免一載入就馬上顯示「未偵測到」嚇到使用者
 
+  // PowerPoint 投影片匯出模式：偵測到 PowerPoint 網頁版檢視器時，右下角改
+  // 顯示「匯出投影片」按鈕（取代對簡報沒用的 PDF 下載按鈕），點一下就直接
+  // 在頁面上啟動這個擴充功能的投影片擷取，不必再開彈出視窗。
+  let slidesMode = false;
+  let slidesBtnEl = null;
+  let slidesBusy = false;
+  let slidesBusyWatchId = null;
+  let slidesDetectId = null;
+
   // 語言設定：預設英文，使用者在 popup 裡切換後存在 chrome.storage.local，
   // 這裡讀出來決定按鈕文字要顯示哪種語言；popup 切換語言時也會即時同步
   // 過來（不需要重新整理頁面）。
@@ -344,6 +353,36 @@
         background: #f3f2f1;
         color: #444;
       }
+
+      /* PowerPoint slide-export button: on a PowerPoint-for-web page there is
+         no downloadable PDF, so instead of the useless "PDF not detected"
+         button we show this — a distinct PowerPoint-orange pill that starts
+         the slide capture right on the page. */
+      #__odpdf_slidesbtn {
+        position: fixed;
+        right: 22px;
+        bottom: 22px;
+        z-index: 2147483647;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 10px 16px;
+        border: 1px solid rgba(255,255,255,0.25);
+        border-radius: 999px;
+        font-family: -apple-system, "Segoe UI", "Microsoft JhengHei", "PingFang TC", sans-serif;
+        font-size: 13px;
+        font-weight: 600;
+        color: #fff;
+        background: #c43e1c;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+        cursor: pointer;
+        user-select: none;
+        transition: filter 0.15s ease, opacity 0.15s ease;
+      }
+      #__odpdf_slidesbtn:hover { filter: brightness(0.93); }
+      #__odpdf_slidesbtn:active { filter: brightness(0.86); }
+      #__odpdf_slidesbtn.__odpdf_disabled { opacity: 0.7; cursor: default; pointer-events: none; }
+      #__odpdf_slidesbtn .__odpdf_icon { font-size: 15px; line-height: 1; }
     `;
     document.documentElement.appendChild(style);
   }
@@ -695,12 +734,21 @@
     const closeEl = document.getElementById("__odpdf_close");
     if (closeEl) closeEl.remove();
 
+    // 換檔也要把投影片模式歸零，並重新偵測（可能從簡報切到 PDF，或反之）。
+    if (slidesBusyWatchId) { clearInterval(slidesBusyWatchId); slidesBusyWatchId = null; }
+    if (slidesDetectId) { clearInterval(slidesDetectId); slidesDetectId = null; }
+    if (slidesBtnEl) { slidesBtnEl.remove(); slidesBtnEl = null; }
+    slidesMode = false;
+    slidesBusy = false;
+
     currentCandidate = null;
     anchorEl = null;
     anchorMode = null;
     dismissed = false; // 換了一個檔案，之前「這次先不顯示」的選擇不該延續下去
     isBusy = false;
     noCandidateMode = false;
+
+    startSlidesDetection();
 
     // 換了新檔案之後，重新給一次寬限期；如果這個新檔案最後還是沒抓到
     // 候選項目，一樣要顯示「未偵測到」的按鈕，不是整頁靜悄悄沒反應。
@@ -717,17 +765,31 @@
   // （使用者看得到狀態，回報問題時才會想到要講「按鈕出現了但是說未偵測到」
   // 而不是籠統地說「沒反應」）。
   function showNoCandidateButton() {
-    if (dismissed || btnEl || currentCandidate) return;
-    noCandidateMode = true;
-    buildButton();
-    startAnchorSearch();
-    btnEl.title = tr("btnNotFoundTitle");
-    btnEl.setAttribute("aria-label", tr("btnNotFoundTitle"));
-    refreshIdleLabel();
+    if (dismissed || btnEl || currentCandidate || slidesMode) return;
+    // On a PowerPoint page we never want the useless "PDF not detected"
+    // button — the slide-export button takes its place (or nothing, while the
+    // viewer is still loading).
+    if (looksLikePpt()) return;
+    // Even off a PowerPoint-looking URL, this could be a PowerPoint deck we
+    // haven't recognised yet (e.g. a SharePoint Doc.aspx link). Do one last
+    // check before falling back to the "not detected" state.
+    querySlides((resp) => {
+      if (resp && resp.ok && (resp.total || 0) > 0) {
+        enterSlidesMode(resp.busy);
+        return;
+      }
+      if (dismissed || btnEl || currentCandidate || slidesMode) return;
+      noCandidateMode = true;
+      buildButton();
+      startAnchorSearch();
+      btnEl.title = tr("btnNotFoundTitle");
+      btnEl.setAttribute("aria-label", tr("btnNotFoundTitle"));
+      refreshIdleLabel();
+    });
   }
 
   function showButtonForCandidate(candidate) {
-    if (dismissed || !candidate) return;
+    if (dismissed || !candidate || slidesMode) return;
     if (
       currentCandidate &&
       currentCandidate.matchedBy === "keyword" &&
@@ -755,6 +817,138 @@
     }
     refreshIdleLabel();
   }
+
+  // ---- PowerPoint slide export (on-page button) --------------------------
+
+  function looksLikePpt() {
+    return /officeapps\.live\.com|\/:p:\/|powerpoint|\.pptx([?&#]|$)/i.test(location.href);
+  }
+
+  // Ask the background to ping every frame in this tab; only the ready
+  // PowerPoint viewer frame (slides.js) answers with { ok, total, busy }.
+  function querySlides(cb) {
+    try {
+      chrome.runtime.sendMessage({ type: "SLIDES_QUERY" }, (resp) => {
+        void chrome.runtime.lastError;
+        cb(resp && resp.ok ? resp : null);
+      });
+    } catch (e) {
+      cb(null);
+    }
+  }
+
+  function setSlidesBtnLabel(text, disabled) {
+    if (!slidesBtnEl) return;
+    const label = slidesBtnEl.querySelector(".__odpdf_label");
+    if (label) label.textContent = text;
+    slidesBtnEl.classList.toggle("__odpdf_disabled", !!disabled);
+  }
+
+  function updateSlidesBtn() {
+    if (!slidesBtnEl) return;
+    if (slidesBusy) setSlidesBtnLabel(tr("slidesBtnBusy"), true);
+    else setSlidesBtnLabel(tr("slidesExportPdf"), false);
+  }
+
+  function buildSlidesButton() {
+    if (slidesBtnEl) return;
+    injectStyle();
+    slidesBtnEl = document.createElement("button");
+    slidesBtnEl.id = "__odpdf_slidesbtn";
+    slidesBtnEl.type = "button";
+    slidesBtnEl.innerHTML =
+      '<span class="__odpdf_icon" aria-hidden="true">📊</span><span class="__odpdf_label"></span>';
+    slidesBtnEl.title = tr("slidesExportTitle");
+    slidesBtnEl.setAttribute("aria-label", tr("slidesExportPdf"));
+    slidesBtnEl.addEventListener("click", onSlidesBtnClick);
+    document.documentElement.appendChild(slidesBtnEl);
+    updateSlidesBtn();
+  }
+
+  // While an export runs, poll the viewer frame's busy flag so the button
+  // re-enables itself when it finishes. Per-slide progress is shown by the
+  // viewer's own status bar (bottom-left), so we don't duplicate it here.
+  function watchSlidesBusy() {
+    if (slidesBusyWatchId) return;
+    slidesBusyWatchId = setInterval(() => {
+      querySlides((resp) => {
+        slidesBusy = !!(resp && resp.busy);
+        updateSlidesBtn();
+        if (!slidesBusy && slidesBusyWatchId) {
+          clearInterval(slidesBusyWatchId);
+          slidesBusyWatchId = null;
+        }
+      });
+    }, 1200);
+  }
+
+  function onSlidesBtnClick() {
+    if (slidesBusy) return;
+    slidesBusy = true;
+    updateSlidesBtn();
+    try {
+      chrome.storage.local.get("odpdf_slide_quality", (r) => {
+        void chrome.runtime.lastError;
+        const quality = (r && r.odpdf_slide_quality) || "standard";
+        chrome.runtime.sendMessage(
+          { type: "SLIDES_START", withImages: true, quality },
+          () => void chrome.runtime.lastError
+        );
+      });
+    } catch (e) {
+      // 讀不到設定就用標準畫質
+      chrome.runtime.sendMessage(
+        { type: "SLIDES_START", withImages: true, quality: "standard" },
+        () => void chrome.runtime.lastError
+      );
+    }
+    watchSlidesBusy();
+  }
+
+  function enterSlidesMode(initialBusy) {
+    if (slidesMode) return;
+    slidesMode = true;
+    slidesBusy = !!initialBusy;
+    // 投影片模式下不需要 PDF 下載按鈕，先把它（以及相關計時器/監聽）清掉。
+    if (anchorIntervalId) { clearInterval(anchorIntervalId); anchorIntervalId = null; }
+    if (noCandidateTimerId) { clearTimeout(noCandidateTimerId); noCandidateTimerId = null; }
+    window.removeEventListener("resize", repositionButton);
+    window.removeEventListener("scroll", repositionButton, true);
+    if (btnEl) { btnEl.remove(); btnEl = null; }
+    const closeEl = document.getElementById("__odpdf_close");
+    if (closeEl) closeEl.remove();
+    currentCandidate = null;
+    anchorEl = null;
+    anchorMode = null;
+    noCandidateMode = false;
+    buildSlidesButton();
+    if (slidesBusy) watchSlidesBusy();
+  }
+
+  // The viewer frame can take a few seconds to load, so poll for it. Stop once
+  // found (→ slide mode) or after a generous window if this isn't a deck.
+  function startSlidesDetection() {
+    if (slidesDetectId) return;
+    const startedAt = Date.now();
+    const tick = () => {
+      if (slidesMode || dismissed) {
+        if (slidesDetectId) { clearInterval(slidesDetectId); slidesDetectId = null; }
+        return;
+      }
+      querySlides((resp) => {
+        if (resp && resp.ok && (resp.total || 0) > 0) {
+          if (slidesDetectId) { clearInterval(slidesDetectId); slidesDetectId = null; }
+          enterSlidesMode(resp.busy);
+        } else if (Date.now() - startedAt > 15000) {
+          if (slidesDetectId) { clearInterval(slidesDetectId); slidesDetectId = null; }
+        }
+      });
+    };
+    slidesDetectId = setInterval(tick, 800);
+    tick();
+  }
+
+  startSlidesDetection();
 
   chrome.runtime.sendMessage({ type: "GET_CANDIDATES" }, (resp) => {
     const list = (resp && resp.candidates) || [];
