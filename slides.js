@@ -168,26 +168,41 @@
       // "Click to add ..." prompt text, and the selection overlay layer that
       // draws the dashed outline around empty placeholders (editing chrome,
       // never part of the slide itself).
-      // Hide the notification callout by its VISIBLE PARTS, never its root: the
-      // toast is a Fluent callout (root id BaseCallout…) containing a beak, a
-      // white beakCurtain and the alertdialog text. Hiding the root makes Fluent
-      // think it failed to show and re-create/re-position it forever — a
-      // re-render loop that janks the whole browser and times out every capture.
-      // Hiding the inner pieces (text + beak + curtain) removes it from the
-      // image while the empty root sits harmlessly, so it stays fast.
+      // NOTE: we do NOT CSS-hide the "no edit permission" notification here.
+      // Hiding any part Fluent positions (its beak, or the whole callout root)
+      // makes Fluent think the show failed and re-create/re-position it forever
+      // — a re-render loop that janks the browser and times out every capture.
+      // Instead we dismiss it with dismissNotification() (click its button /
+      // remove it) before each capture, which is clean and loop-free.
       st.textContent =
         ".visiblePromptTextContent, .visiblePromptTextContent * { visibility: hidden !important; }" +
         ".ShapeSelectionOverlay { display: none !important; }" +
         // The viewer's own status bar sits just below the slide; hide it so a
         // slightly tall capture rect can't catch it.
-        "#WACStatusBarContainer, [id^=StatusBar] { visibility: hidden !important; }" +
-        // The callout's visible parts: text (calloutMain → *allout), the white
-        // curtain and the beak, plus other toast/tooltip shapes.
-        "[class*=allout], [class*=beak], [class*=otification], [class*=oast], [class*=ooltip], [role=alert], [role=alertdialog], [role=tooltip] { visibility: hidden !important; }";
+        "#WACStatusBarContainer, [id^=StatusBar] { visibility: hidden !important; }";
       document.head.appendChild(st);
     } else if (!on && st) {
       st.remove();
     }
+  }
+
+  // Dismiss the "you don't have permission to edit" toast (a Fluent callout,
+  // root id BaseCallout…) by clicking its button or removing it — rather than
+  // CSS-hiding it, which sends Fluent into a re-render loop. Cheap and safe to
+  // call before each capture; returns true if it dismissed one.
+  function dismissNotification() {
+    let did = false;
+    const callouts = document.querySelectorAll('[id^=BaseCallout], [role=alertdialog]');
+    for (const root of callouts) {
+      const box = root.getBoundingClientRect();
+      if (!box.width) continue;
+      const btn = root.querySelector('button, [role=button]');
+      try {
+        if (btn) btn.click(); else root.remove();
+        did = true;
+      } catch (e) { /* ignore */ }
+    }
+    return did;
   }
 
   // Last time the frame fetched anything, and separately the last time it
@@ -619,6 +634,7 @@
         // sits over the thumbnail rail, which is outside every slide clip.
         await send({ type: "SLIDES_INPUT", input: { kind: "move", x: 5, y: Math.round(window.innerHeight / 2) } });
       }
+      dismissNotification();
       for (let i = 0; i < n; i++) {
         setStatus(tr("slidesProgress", { i: i + 1, n }));
         let t = performance.now();
@@ -633,6 +649,9 @@
         if (withImages) {
           setStatus(tr("slidesProgress", { i: i + 1, n }) + " ⤵");
           t = performance.now();
+          // Dismiss the "no edit permission" toast if it's up, so it isn't in
+          // the capture (clicking it away, not CSS-hiding it — see above).
+          if (dismissNotification()) await sleep(60);
           // Capture via the debugger screenshot. (An in-page draw was tried but
           // rendered shapes and fonts wrong on real machines, so the screenshot —
           // faithful, though it flashes in Arc — is the reliable path.)
