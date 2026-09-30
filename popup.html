@@ -203,6 +203,9 @@
   #slidesBox button.secondary { background: #fff; color: #c43e1c; }
   #slidesBox button:disabled { opacity: 0.6; cursor: default; }
   #slidesBox .slides-note { margin-top: 6px; font-size: 11px; color: var(--muted); }
+  #slidesBox .slides-quality { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 12px; }
+  #slidesBox .slides-quality label { color: var(--muted); }
+  #slidesBox .slides-quality select { flex: 1; padding: 3px 4px; border: 1px solid rgba(0,0,0,0.2); border-radius: 4px; font-size: 12px; }
 </style>
 </head>
 <body>
@@ -223,6 +226,14 @@
 
     <div id="slidesBox" style="display:none;">
       <div class="slides-head" id="slidesHead"></div>
+      <div class="slides-quality">
+        <label id="slidesQualityLabel" for="slidesQuality"></label>
+        <select id="slidesQuality">
+          <option value="standard"></option>
+          <option value="high"></option>
+          <option value="max"></option>
+        </select>
+      </div>
       <div class="slides-row">
         <button id="slidesPdf"></button>
         <button id="slidesText" class="secondary"></button>

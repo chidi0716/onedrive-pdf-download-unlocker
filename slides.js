@@ -555,15 +555,19 @@
     }));
   }
 
-  // Every page is rendered to this width regardless of how big the slide
-  // happens to be on screen, so pages come out the same size and sharp.
-  // 960 pt is the width of a standard 16:9 slide. 1600 px over a 960 pt page is
-  // ~120 dpi — sharp for on-screen reading and printing, and roughly 40 %
-  // fewer bytes than 2000 px, which keeps the image-based PDF from bloating.
-  const OUTPUT_WIDTH_PX = 1600;
+  // Output presets the user picks in the popup. Each slide is rendered to `width`
+  // pixels regardless of its on-screen size, so pages come out uniform and sharp;
+  // `jpeg` is the JPEG quality. 960 pt is a standard 16:9 slide's width.
+  const QUALITY = {
+    standard: { width: 1600, jpeg: 80 }, // small file, fine on screen
+    high: { width: 2000, jpeg: 85 },
+    max: { width: 2560, jpeg: 92 }, // near-print
+  };
   const PAGE_WIDTH_PT = 960;
 
-  async function exportSlides(withImages, setStatus) {
+  async function exportSlides(withImages, setStatus, quality) {
+    const q = QUALITY[quality] || QUALITY.standard;
+    const OUTPUT_WIDTH_PX = q.width;
     const t0 = performance.now();
     const p0 = slidePosition();
     const n = p0 ? p0.total : thumbnails().length;
@@ -628,7 +632,7 @@
             const r = box.rect;
             // devicePixelRatio: the debugger screenshot renders at the display's
             // DPR, so divide it out to keep the output at OUTPUT_WIDTH_PX.
-            const res = await send({ type: "SLIDES_CAPTURE", rect: { x: r.left, y: r.top, width: r.width, height: r.height }, scale: OUTPUT_WIDTH_PX / r.width / (window.devicePixelRatio || 1) });
+            const res = await send({ type: "SLIDES_CAPTURE", rect: { x: r.left, y: r.top, width: r.width, height: r.height }, scale: OUTPUT_WIDTH_PX / r.width / (window.devicePixelRatio || 1), jpeg: q.jpeg });
             if (!res || !res.ok) throw new Error((res && res.error) || "capture failed");
             const b = b64ToBytes(res.data);
             // Guard against a bad capture (the first shot of an export has
@@ -697,12 +701,12 @@
   }
 
   let busy = false;
-  async function run(withImages) {
+  async function run(withImages, quality) {
     if (busy) return;
     busy = true;
     setStatus(tr("slidesPreparing"));
     try {
-      const { n, secs } = await exportSlides(withImages, setStatus);
+      const { n, secs } = await exportSlides(withImages, setStatus, quality);
       setStatus(tr(withImages ? "slidesDone" : "slidesTextDone", { n, s: secs }), "done");
     } catch (e) {
       // Show the full error (and where it happened) so a tester can report it.
@@ -722,7 +726,7 @@
       sendResponse({ ok: true, total: p ? p.total : thumbnails().length, busy });
     } else if (msg.type === "SLIDES_RUN") {
       sendResponse({ ok: true, started: !busy });
-      run(!!msg.withImages);
+      run(!!msg.withImages, msg.quality);
     }
   });
 

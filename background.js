@@ -502,11 +502,12 @@ async function beginSlideExport(tabId, frameId, frameUrl) {
   return offset;
 }
 
-async function captureSlide(tabId, rect, scale) {
+async function captureSlide(tabId, rect, scale, jpeg) {
   const st = slideExportByTab[tabId];
   if (!st) throw new Error("export not started");
+  const quality = jpeg >= 1 && jpeg <= 100 ? jpeg : 80;
   const clip = { x: st.offset.x + rect.x, y: st.offset.y + rect.y, width: rect.width, height: rect.height, scale: scale || 2 };
-  const shot = (fromSurface) => cdp(tabId, "Page.captureScreenshot", { format: "jpeg", quality: 80, fromSurface, captureBeyondViewport: false, clip });
+  const shot = (fromSurface) => cdp(tabId, "Page.captureScreenshot", { format: "jpeg", quality, fromSurface, captureBeyondViewport: false, clip });
   // Prefer fromSurface:false — it grabs the pixels straight from the renderer
   // instead of the OS window surface, which avoids the per-slide fullscreen
   // flash some browsers (Arc) show when routing through the surface. But not
@@ -579,7 +580,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg && msg.type === "SLIDES_CAPTURE") {
-    captureSlide(sender.tab.id, msg.rect, msg.scale)
+    captureSlide(sender.tab.id, msg.rect, msg.scale, msg.jpeg)
       .then((data) => sendResponse({ ok: true, data }))
       .catch((e) => sendResponse({ ok: false, error: e.message }));
     return true;

@@ -322,11 +322,17 @@ function checkSlides(tab) {
   });
 }
 
+const QUALITY_KEY = "odpdf_slide_quality";
+function currentQuality() {
+  return document.getElementById("slidesQuality").value || "standard";
+}
+
 function startSlides(withImages) {
+  const quality = currentQuality();
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const tab = tabs[0];
     if (!tab) return;
-    chrome.tabs.sendMessage(tab.id, { type: "SLIDES_RUN", withImages }, () => {
+    chrome.tabs.sendMessage(tab.id, { type: "SLIDES_RUN", withImages, quality }, () => {
       void chrome.runtime.lastError;
       document.getElementById("slidesNote").textContent = tr("slidesStarted");
       for (const id of ["slidesPdf", "slidesText"]) document.getElementById(id).disabled = true;
@@ -366,15 +372,35 @@ function applyStaticI18n() {
   document.getElementById("slidesPdf").title = tr("slidesExportTitle");
   document.getElementById("slidesText").textContent = tr("slidesExportText");
   document.getElementById("slidesText").title = tr("slidesTextTitle");
+  document.getElementById("slidesQualityLabel").textContent = tr("slidesQualityLabel");
+  const qSel = document.getElementById("slidesQuality");
+  qSel.options[0].textContent = tr("slidesQualityStandard");
+  qSel.options[1].textContent = tr("slidesQualityHigh");
+  qSel.options[2].textContent = tr("slidesQualityMax");
   document.getElementById("emptyText").innerHTML = tr("emptyText");
   document.getElementById("footerText").textContent = tr("footerText");
   document.getElementById("langSelect").value = LANG;
+}
+
+function initQuality() {
+  const sel = document.getElementById("slidesQuality");
+  try {
+    chrome.storage.local.get(QUALITY_KEY, (r) => {
+      void chrome.runtime.lastError;
+      const v = r && r[QUALITY_KEY];
+      if (v === "standard" || v === "high" || v === "max") sel.value = v;
+    });
+  } catch (e) { /* ignore */ }
+  sel.addEventListener("change", () => {
+    try { chrome.storage.local.set({ [QUALITY_KEY]: sel.value }); } catch (e) { /* ignore */ }
+  });
 }
 
 function initLang() {
   ODPDF_I18N.getLang((lang) => {
     LANG = lang;
     applyStaticI18n();
+    initQuality();
     refresh();
   });
 
