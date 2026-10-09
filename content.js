@@ -64,11 +64,14 @@
   // PowerPoint 投影片匯出模式：偵測到 PowerPoint 網頁版檢視器時，右下角改
   // 顯示「匯出投影片」按鈕（取代對簡報沒用的 PDF 下載按鈕），點一下就直接
   // 在頁面上啟動這個擴充功能的投影片擷取，不必再開彈出視窗。
+  // 狀態由檢視器那層的 slides.js 主動通知（SLIDES_STATE，經 background 轉來），
+  // 不用輪詢：檢視器就緒時出現、匯出中隱藏（避免被截進投影片）、結束後恢復。
   let slidesMode = false;
-  let slidesBtnEl = null;
+  let slidesBarEl = null; // 按鈕 + 關閉鈕的外框
   let slidesBusy = false;
-  let slidesBusyWatchId = null;
-  let slidesDetectId = null;
+  let slidesDismissed = false; // 使用者按了 ✕，這個檔案就不再顯示
+
+  const U = window.ODPDF_UTIL;
 
   // 語言設定：預設英文，使用者在 popup 裡切換後存在 chrome.storage.local，
   // 這裡讀出來決定按鈕文字要顯示哪種語言；popup 切換語言時也會即時同步
@@ -103,6 +106,7 @@
             }
             refreshIdleLabel();
           }
+          refreshSlidesBarText();
         }
       });
     } catch (e) {
@@ -110,14 +114,7 @@
     }
   }
 
-  function sanitizeFilename(name) {
-    name = (name || "").trim();
-    name = name.replace(/[\\/:*?"<>|]/g, "_");
-    name = name.replace(/[\x00-\x1f\x7f]/g, "");
-    name = name.replace(/[\s.]+$/g, "");
-    if (name.length > 150) name = name.slice(0, 150).trim();
-    return name;
-  }
+  const sanitizeFilename = U.sanitizeFilename;
 
   function ensurePdfExt(name) {
     if (!name) name = "document";
@@ -356,33 +353,53 @@
 
       /* PowerPoint slide-export button: on a PowerPoint-for-web page there is
          no downloadable PDF, so instead of the useless "PDF not detected"
-         button we show this — a distinct PowerPoint-orange pill that starts
-         the slide capture right on the page. */
-      #__odpdf_slidesbtn {
+         button we show this — a PowerPoint-orange pill that starts the slide
+         capture right on the page, with a small ✕ to hide it.
+         Sits above the viewer's bottom status bar (zoom controls live there),
+         and is hidden while an export runs so it can never end up in a
+         capture. */
+      #__odpdf_slidesbar {
         position: fixed;
-        right: 22px;
-        bottom: 22px;
+        right: 24px;
+        bottom: 64px;
         z-index: 2147483647;
+        display: inline-flex;
+        align-items: stretch;
+        border: 1px solid rgba(255,255,255,0.25);
+        border-radius: 999px;
+        overflow: hidden;
+        background: #c43e1c;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+        font-family: -apple-system, "Segoe UI", "Microsoft JhengHei", "PingFang TC", sans-serif;
+        user-select: none;
+      }
+      #__odpdf_slidesbar button {
+        margin: 0;
+        border: none;
+        background: transparent;
+        color: #fff;
+        cursor: pointer;
+        font: inherit;
+        transition: background 0.15s ease;
+      }
+      #__odpdf_slidesbar button:hover { background: rgba(0,0,0,0.12); }
+      #__odpdf_slidesbar button:active { background: rgba(0,0,0,0.22); }
+      #__odpdf_slidesbar button:focus-visible { outline: 2px solid #fff; outline-offset: -3px; }
+      #__odpdf_slidesbtn {
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        padding: 10px 16px;
-        border: 1px solid rgba(255,255,255,0.25);
-        border-radius: 999px;
-        font-family: -apple-system, "Segoe UI", "Microsoft JhengHei", "PingFang TC", sans-serif;
+        padding: 10px 12px 10px 16px;
         font-size: 13px;
         font-weight: 600;
-        color: #fff;
-        background: #c43e1c;
-        box-shadow: 0 4px 14px rgba(0,0,0,0.3);
-        cursor: pointer;
-        user-select: none;
-        transition: filter 0.15s ease, opacity 0.15s ease;
       }
-      #__odpdf_slidesbtn:hover { filter: brightness(0.93); }
-      #__odpdf_slidesbtn:active { filter: brightness(0.86); }
-      #__odpdf_slidesbtn.__odpdf_disabled { opacity: 0.7; cursor: default; pointer-events: none; }
       #__odpdf_slidesbtn .__odpdf_icon { font-size: 15px; line-height: 1; }
+      #__odpdf_slidesclose {
+        padding: 0 12px 0 10px;
+        font-size: 11px;
+        opacity: 0.85;
+        border-left: 1px solid rgba(255,255,255,0.3) !important;
+      }
     `;
     document.documentElement.appendChild(style);
   }
@@ -586,50 +603,6 @@
     }
   }
 
-  function base64ToUint8(b64) {
-    const chars = atob(b64);
-    const arr = new Uint8Array(chars.length);
-    for (let i = 0; i < chars.length; i++) arr[i] = chars.charCodeAt(i);
-    return arr;
-  }
-
-  function concatUint8(parts) {
-    let total = 0;
-    for (const p of parts) total += p.length;
-    const out = new Uint8Array(total);
-    let offset = 0;
-    for (const p of parts) {
-      out.set(p, offset);
-      offset += p.length;
-    }
-    return out;
-  }
-
-  // Turn a DOWNLOAD_FILE response into the raw bytes. Small files arrive
-  // inline as base64; large ones are pulled chunk-by-chunk (issue #1) so no
-  // single runtime message approaches the ~64 MiB cap.
-  async function bytesFromResponse(resp) {
-    if (!resp.streamed) return base64ToUint8(resp.base64);
-    const parts = [];
-    for (let i = 0; i < resp.totalChunks; i++) {
-      const chunk = await chrome.runtime.sendMessage({
-        type: "GET_CHUNK",
-        transferId: resp.transferId,
-        index: i,
-        chunkSize: resp.chunkSize,
-      });
-      if (!chunk || !chunk.ok) {
-        throw new Error((chunk && chunk.error) || "chunk transfer failed");
-      }
-      parts.push(base64ToUint8(chunk.base64));
-    }
-    chrome.runtime.sendMessage(
-      { type: "RELEASE_TRANSFER", transferId: resp.transferId },
-      () => void chrome.runtime.lastError
-    );
-    return concatUint8(parts);
-  }
-
   async function onBtnClick() {
     if (!currentCandidate) return;
     const candidate = currentCandidate;
@@ -647,13 +620,13 @@
       });
 
       if (!resp || !resp.ok) {
-        const reason = (resp && (resp.status || resp.statusText || resp.error)) || "未知錯誤";
+        const reason = (resp && (resp.status || resp.statusText || resp.error)) || tr("unknownError");
         setLabel(tr("btnFailed") + reason, { disabled: false });
         setTimeout(() => { isBusy = false; setLabel(idleLabel, { disabled: false }); }, 3500);
         return;
       }
 
-      const bytes = await bytesFromResponse(resp);
+      const bytes = await U.bytesFromResponse(resp);
       const blob = new Blob([bytes], {
         type: resp.contentType || "application/pdf",
       });
@@ -734,12 +707,12 @@
     const closeEl = document.getElementById("__odpdf_close");
     if (closeEl) closeEl.remove();
 
-    // 換檔也要把投影片模式歸零，並重新偵測（可能從簡報切到 PDF，或反之）。
-    if (slidesBusyWatchId) { clearInterval(slidesBusyWatchId); slidesBusyWatchId = null; }
-    if (slidesDetectId) { clearInterval(slidesDetectId); slidesDetectId = null; }
-    if (slidesBtnEl) { slidesBtnEl.remove(); slidesBtnEl = null; }
+    // 換檔也要把投影片模式歸零，並重新確認一次（可能從簡報切到 PDF，或反之）。
+    // 之後檢視器就緒時 slides.js 也會主動通知。
+    if (slidesBarEl) { slidesBarEl.remove(); slidesBarEl = null; }
     slidesMode = false;
     slidesBusy = false;
+    slidesDismissed = false;
 
     currentCandidate = null;
     anchorEl = null;
@@ -748,7 +721,7 @@
     isBusy = false;
     noCandidateMode = false;
 
-    startSlidesDetection();
+    checkSlidesOnce();
 
     // 換了新檔案之後，重新給一次寬限期；如果這個新檔案最後還是沒抓到
     // 候選項目，一樣要顯示「未偵測到」的按鈕，不是整頁靜悄悄沒反應。
@@ -774,8 +747,8 @@
     // haven't recognised yet (e.g. a SharePoint Doc.aspx link). Do one last
     // check before falling back to the "not detected" state.
     querySlides((resp) => {
-      if (resp && resp.ok && (resp.total || 0) > 0) {
-        enterSlidesMode(resp.busy);
+      if (resp && (resp.total || 0) > 0) {
+        handleSlidesState(resp);
         return;
       }
       if (dismissed || btnEl || currentCandidate || slidesMode) return;
@@ -820,8 +793,12 @@
 
   // ---- PowerPoint slide export (on-page button) --------------------------
 
+  // A PowerPoint page by its URL: the viewer itself (officeapps.live.com) or a
+  // SharePoint/OneDrive PowerPoint link (/:p:/, or a .pptx file name). Only
+  // used to keep the "PDF not detected" button off such pages; whether a deck
+  // is really there is reported by slides.js.
   function looksLikePpt() {
-    return /officeapps\.live\.com|\/:p:\/|powerpoint|\.pptx([?&#]|$)/i.test(location.href);
+    return /officeapps\.live\.com|\/:p:\/|\.pptx([?&#]|$)/i.test(location.href);
   }
 
   // Ask the background to ping every frame in this tab; only the ready
@@ -837,78 +814,26 @@
     }
   }
 
-  function setSlidesBtnLabel(text, disabled) {
-    if (!slidesBtnEl) return;
-    const label = slidesBtnEl.querySelector(".__odpdf_label");
-    if (label) label.textContent = text;
-    slidesBtnEl.classList.toggle("__odpdf_disabled", !!disabled);
+  // One check on load (and after a file switch), in case the viewer became
+  // ready before this script was listening. Every later change arrives as a
+  // SLIDES_STATE message from slides.js, so nothing here polls.
+  function checkSlidesOnce() {
+    querySlides((resp) => {
+      if (resp) handleSlidesState(resp);
+    });
   }
 
-  function updateSlidesBtn() {
-    if (!slidesBtnEl) return;
-    if (slidesBusy) setSlidesBtnLabel(tr("slidesBtnBusy"), true);
-    else setSlidesBtnLabel(tr("slidesExportPdf"), false);
+  // State from the viewer frame: { total, busy }.
+  function handleSlidesState(state) {
+    if (!state || !((state.total || 0) > 0)) return;
+    slidesBusy = !!state.busy;
+    if (!slidesMode) enterSlidesMode();
+    updateSlidesBar();
   }
 
-  function buildSlidesButton() {
-    if (slidesBtnEl) return;
-    injectStyle();
-    slidesBtnEl = document.createElement("button");
-    slidesBtnEl.id = "__odpdf_slidesbtn";
-    slidesBtnEl.type = "button";
-    slidesBtnEl.innerHTML =
-      '<span class="__odpdf_icon" aria-hidden="true">📊</span><span class="__odpdf_label"></span>';
-    slidesBtnEl.title = tr("slidesExportTitle");
-    slidesBtnEl.setAttribute("aria-label", tr("slidesExportPdf"));
-    slidesBtnEl.addEventListener("click", onSlidesBtnClick);
-    document.documentElement.appendChild(slidesBtnEl);
-    updateSlidesBtn();
-  }
-
-  // While an export runs, poll the viewer frame's busy flag so the button
-  // re-enables itself when it finishes. Per-slide progress is shown by the
-  // viewer's own status bar (bottom-left), so we don't duplicate it here.
-  function watchSlidesBusy() {
-    if (slidesBusyWatchId) return;
-    slidesBusyWatchId = setInterval(() => {
-      querySlides((resp) => {
-        slidesBusy = !!(resp && resp.busy);
-        updateSlidesBtn();
-        if (!slidesBusy && slidesBusyWatchId) {
-          clearInterval(slidesBusyWatchId);
-          slidesBusyWatchId = null;
-        }
-      });
-    }, 1200);
-  }
-
-  function onSlidesBtnClick() {
-    if (slidesBusy) return;
-    slidesBusy = true;
-    updateSlidesBtn();
-    try {
-      chrome.storage.local.get("odpdf_slide_quality", (r) => {
-        void chrome.runtime.lastError;
-        const quality = (r && r.odpdf_slide_quality) || "standard";
-        chrome.runtime.sendMessage(
-          { type: "SLIDES_START", withImages: true, quality },
-          () => void chrome.runtime.lastError
-        );
-      });
-    } catch (e) {
-      // 讀不到設定就用標準畫質
-      chrome.runtime.sendMessage(
-        { type: "SLIDES_START", withImages: true, quality: "standard" },
-        () => void chrome.runtime.lastError
-      );
-    }
-    watchSlidesBusy();
-  }
-
-  function enterSlidesMode(initialBusy) {
+  function enterSlidesMode() {
     if (slidesMode) return;
     slidesMode = true;
-    slidesBusy = !!initialBusy;
     // 投影片模式下不需要 PDF 下載按鈕，先把它（以及相關計時器/監聽）清掉。
     if (anchorIntervalId) { clearInterval(anchorIntervalId); anchorIntervalId = null; }
     if (noCandidateTimerId) { clearTimeout(noCandidateTimerId); noCandidateTimerId = null; }
@@ -921,34 +846,102 @@
     anchorEl = null;
     anchorMode = null;
     noCandidateMode = false;
-    buildSlidesButton();
-    if (slidesBusy) watchSlidesBusy();
   }
 
-  // The viewer frame can take a few seconds to load, so poll for it. Stop once
-  // found (→ slide mode) or after a generous window if this isn't a deck.
-  function startSlidesDetection() {
-    if (slidesDetectId) return;
-    const startedAt = Date.now();
-    const tick = () => {
-      if (slidesMode || dismissed) {
-        if (slidesDetectId) { clearInterval(slidesDetectId); slidesDetectId = null; }
-        return;
-      }
-      querySlides((resp) => {
-        if (resp && resp.ok && (resp.total || 0) > 0) {
-          if (slidesDetectId) { clearInterval(slidesDetectId); slidesDetectId = null; }
-          enterSlidesMode(resp.busy);
-        } else if (Date.now() - startedAt > 15000) {
-          if (slidesDetectId) { clearInterval(slidesDetectId); slidesDetectId = null; }
-        }
+  function buildSlidesBar() {
+    if (slidesBarEl || slidesDismissed) return;
+    injectStyle();
+    slidesBarEl = document.createElement("div");
+    slidesBarEl.id = "__odpdf_slidesbar";
+    const btn = document.createElement("button");
+    btn.id = "__odpdf_slidesbtn";
+    btn.type = "button";
+    btn.innerHTML = '<span class="__odpdf_icon" aria-hidden="true">📊</span><span class="__odpdf_label"></span>';
+    btn.addEventListener("click", onSlidesBtnClick);
+    const close = document.createElement("button");
+    close.id = "__odpdf_slidesclose";
+    close.type = "button";
+    close.textContent = "✕";
+    close.addEventListener("click", (e) => {
+      e.stopPropagation();
+      slidesDismissed = true; // until the next file / page load
+      if (slidesBarEl) { slidesBarEl.remove(); slidesBarEl = null; }
+    });
+    slidesBarEl.append(btn, close);
+    document.documentElement.appendChild(slidesBarEl);
+    refreshSlidesBarText();
+  }
+
+  function refreshSlidesBarText() {
+    if (!slidesBarEl) return;
+    const btn = slidesBarEl.querySelector("#__odpdf_slidesbtn");
+    const close = slidesBarEl.querySelector("#__odpdf_slidesclose");
+    btn.querySelector(".__odpdf_label").textContent = tr("slidesExportPdf");
+    btn.title = tr("slidesExportTitle");
+    close.title = tr("slidesCloseTitle");
+    close.setAttribute("aria-label", tr("slidesCloseTitle"));
+  }
+
+  // Shown when idle; hidden while an export runs, so it can never end up in a
+  // capture (the viewer's own status bar shows the progress meanwhile).
+  function updateSlidesBar() {
+    if (slidesDismissed) return;
+    if (!slidesBarEl) buildSlidesBar();
+    if (slidesBarEl) slidesBarEl.style.display = slidesBusy ? "none" : "";
+  }
+
+  // The export moves through the slides with key presses, and keys go to the
+  // focused frame. Clicking this button put focus on the top page, so hand it
+  // back to the viewer's iframe first. (From the popup focus never leaves the
+  // viewer, which is why that path never needed this.)
+  function focusViewerFrame() {
+    if (/officeapps\.live\.com/i.test(location.hostname)) {
+      // This page IS the viewer: just take focus off our own button.
+      if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+      return;
+    }
+    const frames = [...document.querySelectorAll("iframe")];
+    const viewer =
+      frames.find((f) => {
+        try { return /officeapps\.live\.com/i.test(new URL(f.src, location.href).hostname); } catch (e) { return false; }
+      }) || frames.find((f) => /^WacFrame_/i.test(f.id || f.name || ""));
+    if (viewer) {
+      try { viewer.focus(); } catch (e) { /* ignore */ }
+    }
+  }
+
+  function startSlidesExport(quality) {
+    chrome.runtime.sendMessage(
+      { type: "SLIDES_START", withImages: true, quality },
+      () => void chrome.runtime.lastError
+    );
+  }
+
+  function onSlidesBtnClick() {
+    if (slidesBusy) return;
+    slidesBusy = true;
+    updateSlidesBar(); // hide at once; slides.js confirms with SLIDES_STATE
+    focusViewerFrame();
+    try {
+      chrome.storage.local.get("odpdf_slide_quality", (r) => {
+        void chrome.runtime.lastError;
+        startSlidesExport((r && r.odpdf_slide_quality) || "standard");
       });
-    };
-    slidesDetectId = setInterval(tick, 800);
-    tick();
+    } catch (e) {
+      startSlidesExport("standard"); // 讀不到設定就用標準畫質
+    }
+    // If the viewer never reports back (e.g. it was reloaded meanwhile), don't
+    // leave the button hidden for good.
+    setTimeout(() => {
+      if (!slidesBusy) return;
+      querySlides((resp) => {
+        if (resp) handleSlidesState(resp);
+        else { slidesBusy = false; updateSlidesBar(); }
+      });
+    }, 4000);
   }
 
-  startSlidesDetection();
+  checkSlidesOnce();
 
   chrome.runtime.sendMessage({ type: "GET_CANDIDATES" }, (resp) => {
     const list = (resp && resp.candidates) || [];
@@ -961,6 +954,8 @@
       showButtonForCandidate(msg.candidate);
     } else if (msg && msg.type === "RESET_CANDIDATES") {
       resetForNewDocument();
+    } else if (msg && msg.type === "SLIDES_STATE") {
+      handleSlidesState(msg);
     }
   });
 

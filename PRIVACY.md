@@ -2,7 +2,7 @@
 
 **OneDrive / SharePoint PDF Download Unlocker**
 
-最後更新 / Last updated: 2026-06-26
+最後更新 / Last updated: 2026-10-09
 
 ---
 
@@ -22,11 +22,12 @@
 
 ### 本機儲存的資料
 
-擴充功能會用瀏覽器內建的 `chrome.storage.local`（純粹存在你自己的電腦上，不會同步到雲端、不會離開你的裝置）儲存一項設定：
+擴充功能會用瀏覽器內建的 `chrome.storage.local`（純粹存在你自己的電腦上，不會同步到雲端、不會離開你的裝置）儲存兩項設定：
 
 - 你選擇的顯示語言（英文或中文）。
+- 你選擇的投影片匯出畫質（標準／高／最高）。
 
-除此之外不會儲存任何其他內容；分頁關閉後，該分頁偵測到的檔案請求資訊也會自動清除，不會留存。
+除此之外不會儲存任何其他內容；匯出的投影片與文字只會存成你「下載」資料夾裡的檔案；分頁關閉後，該分頁偵測到的檔案請求資訊也會自動清除，不會留存。
 
 ### 使用到的權限與用途
 
@@ -35,7 +36,7 @@
 | `webRequest` / `webNavigation` | 偵測 OneDrive / SharePoint 頁面載入的檔案內容請求，找出真正的 PDF/文件資料 |
 | `downloads` | 把抓到的檔案內容存成本機檔案 |
 | `activeTab` / `scripting` | 在目前分頁裡讀取檔案標題、觸發瀏覽器原生的下載動作 |
-| `storage` | 只用來記住你選的顯示語言 |
+| `storage` | 只用來記住你選的顯示語言與投影片匯出畫質 |
 | `debugger`（Chrome / Edge） | 只用於「匯出投影片（PDF）」功能：在 PowerPoint 網頁版中翻頁並高解析度擷取投影片畫面。只在你按下匯出時、且只作用於該分頁，匯出結束立刻解除。擷取的畫面只在本機組成 PDF，不會傳出去。（Firefox 沒有此 API，因此不支援投影片匯出。）|
 | `host_permissions`（限定 sharepoint.com、sharepointonline.com、onedrive.live.com、officeapps.live.com、1drv.ms、svc.ms、mcas.ms、login.microsoftonline.com、login.windows.net、spoprod-a.akamaihd.net） | 只在這些微軟 OneDrive / SharePoint 相關網域上運作（`svc.ms` 是實際傳送檔案內容的後端服務網域；`mcas.ms` 是部分企業/學校啟用的安全代理網域；其餘是登入與靜態資源網域），不會影響或讀取其他網站 |
 
@@ -57,11 +58,12 @@ Everything this extension does happens entirely inside your own browser:
 
 ### Data stored locally
 
-The extension uses the browser's built-in `chrome.storage.local` (which lives only on your own device and is never synced or transmitted) to remember exactly one setting:
+The extension uses the browser's built-in `chrome.storage.local` (which lives only on your own device and is never synced or transmitted) to remember exactly two settings:
 
 - Your chosen display language (English or Chinese).
+- Your chosen slide-export quality (Standard / High / Max).
 
-Nothing else is stored. Detected file-request information for a tab is automatically cleared once that tab is closed.
+Nothing else is stored; exported slides and text only become files in your Downloads folder. Detected file-request information for a tab is automatically cleared once that tab is closed.
 
 ### Permissions used and why
 
@@ -70,6 +72,6 @@ Nothing else is stored. Detected file-request information for a tab is automatic
 | `webRequest` / `webNavigation` | Detect the network request on OneDrive/SharePoint pages that carries the actual PDF/document content |
 | `downloads` | Save the fetched file content as a local file |
 | `activeTab` / `scripting` | Read the document title in the current tab and trigger the browser's native download action |
-| `storage` | Remember only your chosen display language |
+| `storage` | Remember only your chosen display language and slide-export quality |
 | `debugger` (Chrome / Edge) | Used only by "Export slides (PDF)": to step through slides in PowerPoint for the web and capture them at high resolution. It attaches only while you run an export, only to that tab, and detaches as soon as the export ends. Captures are assembled into a PDF locally and never sent anywhere. (Firefox lacks this API, so slide export is unavailable there.) |
 | `host_permissions` (limited to sharepoint.com, sharepointonline.com, onedrive.live.com, officeapps.live.com, 1drv.ms, svc.ms, mcas.ms, login.microsoftonline.com, login.windows.net, spoprod-a.akamaihd.net) | The extension only operates on these Microsoft OneDrive/SharePoint domains (`svc.ms` actually serves file content; `mcas.ms` is a security proxy domain some organizations enable; the rest are sign-in and static-asset domains) and does not access or affect any other website |

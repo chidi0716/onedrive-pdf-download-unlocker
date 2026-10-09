@@ -12,21 +12,8 @@ function fmtSize(bytes) {
   return bytes + " B";
 }
 
-// 同時相容 Windows 與 macOS 的檔名規則：
-// - 移除 Windows 保留字元 \ / : * ? " < > |（macOS 允許但移除無妨）
-// - 移除控制字元
-// - 避免結尾留下句點或空白（Windows 不允許檔名以這些字元結尾）
-// - 限制長度，避免超過任一作業系統的路徑長度限制
-function sanitizeFilename(name) {
-  name = (name || "").trim();
-  name = name.replace(/[\\/:*?"<>|]/g, "_");
-  name = name.replace(/[\x00-\x1f\x7f]/g, "");
-  name = name.replace(/[\s.]+$/g, "");
-  if (name.length > 150) {
-    name = name.slice(0, 150).trim();
-  }
-  return name;
-}
+const U = window.ODPDF_UTIL;
+const sanitizeFilename = U.sanitizeFilename;
 
 function ensurePdfExt(name) {
   if (!name) name = "document";
@@ -149,53 +136,11 @@ async function saveBytesInTab(tabId, base64, filename, contentType) {
   return results && results[0] ? results[0].result : { ok: false, error: "no result" };
 }
 
-function base64ToUint8(b64) {
-  const chars = atob(b64);
-  const arr = new Uint8Array(chars.length);
-  for (let i = 0; i < chars.length; i++) arr[i] = chars.charCodeAt(i);
-  return arr;
-}
-
-function concatUint8(parts) {
-  let total = 0;
-  for (const p of parts) total += p.length;
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const p of parts) {
-    out.set(p, offset);
-    offset += p.length;
-  }
-  return out;
-}
-
-// Pull a large streamed transfer chunk-by-chunk (issue #1) and reassemble it
-// in the popup. Small files still arrive inline as base64.
-async function bytesFromResponse(resp) {
-  const parts = [];
-  for (let i = 0; i < resp.totalChunks; i++) {
-    const chunk = await chrome.runtime.sendMessage({
-      type: "GET_CHUNK",
-      transferId: resp.transferId,
-      index: i,
-      chunkSize: resp.chunkSize,
-    });
-    if (!chunk || !chunk.ok) {
-      throw new Error((chunk && chunk.error) || "chunk transfer failed");
-    }
-    parts.push(base64ToUint8(chunk.base64));
-  }
-  chrome.runtime.sendMessage(
-    { type: "RELEASE_TRANSFER", transferId: resp.transferId },
-    () => void chrome.runtime.lastError
-  );
-  return concatUint8(parts);
-}
-
 // Large files can't be handed to the tab via executeScript either (its args
 // hit the same ~64 MiB message cap), so reassemble the bytes here and save
 // them with chrome.downloads using a blob URL from the popup's own context.
 async function saveLargeViaDownloads(resp, filename) {
-  const bytes = await bytesFromResponse(resp);
+  const bytes = await U.bytesFromResponse(resp);
   const blob = new Blob([bytes], { type: resp.contentType || "application/pdf" });
   const blobUrl = URL.createObjectURL(blob);
   try {
@@ -307,15 +252,29 @@ async function render(tab, candidates) {
 // PowerPoint for the web: ask the viewer frame (slides.js) whether it's
 // ready, and if so offer the slide export. The export itself runs in the
 // page; this popup only starts it.
+// On a PowerPoint page the popup switches to "slides mode": the slide export
+// box shows, the help explains the slide export, and the PDF-only parts (the
+// rescan button and the "no file requests detected, reload the PDF preview"
+// empty state) are hidden — they don't apply to a deck and only contradicted
+// the slides box.
+let slidesMode = false;
+function setSlidesMode(on) {
+  slidesMode = !!on;
+  document.body.classList.toggle("slides-mode", slidesMode);
+  renderHelp();
+}
+
 function checkSlides(tab) {
   const box = document.getElementById("slidesBox");
   chrome.tabs.sendMessage(tab.id, { type: "SLIDES_PING" }, (resp) => {
     void chrome.runtime.lastError;
     if (!resp || !resp.ok) {
       box.style.display = "none";
+      setSlidesMode(false);
       return;
     }
     box.style.display = "block";
+    setSlidesMode(true);
     document.getElementById("slidesHead").textContent = tr("slidesPopupHeading").replace("{n}", resp.total || "?");
     document.getElementById("slidesNote").textContent = resp.busy ? tr("slidesStarted") : tr("slidesDebuggerNote");
     for (const id of ["slidesPdf", "slidesText"]) document.getElementById(id).disabled = !!resp.busy;
@@ -332,10 +291,12 @@ function startSlides(withImages) {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const tab = tabs[0];
     if (!tab) return;
-    chrome.tabs.sendMessage(tab.id, { type: "SLIDES_RUN", withImages, quality }, () => {
+    chrome.tabs.sendMessage(tab.id, { type: "SLIDES_RUN", withImages, quality }, (resp) => {
       void chrome.runtime.lastError;
-      document.getElementById("slidesNote").textContent = tr("slidesStarted");
-      for (const id of ["slidesPdf", "slidesText"]) document.getElementById(id).disabled = true;
+      const ok = !!(resp && resp.ok);
+      // Only claim "started" when the viewer frame actually answered.
+      document.getElementById("slidesNote").textContent = ok ? tr("slidesStarted") : tr("slidesStartFailed");
+      for (const id of ["slidesPdf", "slidesText"]) document.getElementById(id).disabled = ok;
     });
   });
 }
@@ -354,12 +315,12 @@ function refresh() {
   });
 }
 
-function applyStaticI18n() {
-  document.documentElement.lang = LANG;
-  document.getElementById("hdrTitle").innerHTML =
-    tr("popupTitleLine1") + "<br/>" + tr("popupTitleLine2");
-  document.getElementById("helpSummary").textContent = tr("helpSummary");
-  const steps = ["helpStep1", "helpStep2", "helpStep3", "helpStep4", "helpStep5"];
+// The help steps for what this page offers: the slide export on a PowerPoint
+// page, otherwise the PDF download.
+function renderHelp() {
+  const steps = slidesMode
+    ? ["helpSlides1", "helpSlides2", "helpSlides3"]
+    : ["helpStep1", "helpStep2", "helpStep3", "helpStep4", "helpStep5"];
   const stepsEl = document.getElementById("helpSteps");
   stepsEl.innerHTML = "";
   for (const key of steps) {
@@ -367,6 +328,14 @@ function applyStaticI18n() {
     li.innerHTML = tr(key);
     stepsEl.appendChild(li);
   }
+}
+
+function applyStaticI18n() {
+  document.documentElement.lang = LANG;
+  document.getElementById("hdrTitle").innerHTML =
+    tr("popupTitleLine1") + "<br/>" + tr("popupTitleLine2");
+  document.getElementById("helpSummary").textContent = tr("helpSummary");
+  renderHelp();
   document.getElementById("refresh").textContent = tr("refreshBtn");
   document.getElementById("slidesPdf").textContent = "⬇ " + tr("slidesExportPdf");
   document.getElementById("slidesPdf").title = tr("slidesExportTitle");

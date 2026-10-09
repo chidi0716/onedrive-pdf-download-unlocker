@@ -19,9 +19,11 @@
     throw new Error("not a JPEG (no SOF marker)");
   }
 
+  // The PDF as a list of byte chunks (strings already encoded), in order.
   // pages: array of Uint8Array (JPEG bytes). pxPerPt: how many image pixels
-  // map to one PDF point (2 for a 2x capture keeps the page at on-screen size).
-  function buildPdf(pages, pxPerPt) {
+  // map to one PDF point (e.g. 1600 px over a 960 pt page = 1.667).
+  // The JPEG chunks are the caller's own arrays, not copies.
+  function buildPdfChunks(pages, pxPerPt) {
     const enc = new TextEncoder();
     const chunks = [];
     const offsets = [];
@@ -69,8 +71,15 @@
     for (let k = 1; k < total; k++) table += String(offsets[k]).padStart(10, "0") + " 00000 n \n";
     push(table);
     push(`trailer\n<< /Size ${total} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+    return chunks;
+  }
 
-    const out = new Uint8Array(pos);
+  // The PDF as one Uint8Array (copies every chunk; handy for tests).
+  function buildPdf(pages, pxPerPt) {
+    const chunks = buildPdfChunks(pages, pxPerPt);
+    let size = 0;
+    for (const c of chunks) size += c.length;
+    const out = new Uint8Array(size);
     let o = 0;
     for (const c of chunks) {
       out.set(c, o);
@@ -79,5 +88,12 @@
     return out;
   }
 
-  global.ODPDF_PDF = { buildPdf: buildPdf, jpegSize: jpegSize };
+  // The PDF as a Blob built straight from the chunks, so the JPEGs are not
+  // copied into one big array first — that copy doubled peak memory, which
+  // matters for long decks at Max quality.
+  function buildPdfBlob(pages, pxPerPt) {
+    return new Blob(buildPdfChunks(pages, pxPerPt), { type: "application/pdf" });
+  }
+
+  global.ODPDF_PDF = { buildPdf, buildPdfBlob, jpegSize };
 })(typeof window !== "undefined" ? window : globalThis);

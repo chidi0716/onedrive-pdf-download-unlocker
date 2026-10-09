@@ -2,7 +2,7 @@
 
 # OneDrive / SharePoint PDF 下載限制繞過工具（瀏覽器擴充功能）
 
-最後更新：2026-09-30（版本 1.2.0）
+最後更新：2026-10-09（版本 1.2.1）
 
 ## 這是什麼
 
@@ -39,7 +39,7 @@
 
 ### Chrome / Edge
 
-1. 到本專案的 [Releases](../../releases) 頁面，下載最新版的 `onedrive-pdf-download-unlocker-chrome.zip` 並解壓縮（或直接 clone/下載這個 repo 的原始碼）。
+1. 到本專案的 [Releases](../../releases) 頁面，下載最新版的 `onedrive-pdf-download-unlocker-<版本>-chrome.zip` 並解壓縮（或直接 clone/下載這個 repo 的原始碼）。
 2. 開啟 Chrome（或 Edge），網址列輸入 `chrome://extensions`（Edge 為 `edge://extensions`）。
 3. 右上角開啟「開發人員模式」。
 4. 點「載入未封裝項目」，選擇剛剛解壓縮出來的資料夾（裡面要能直接看到 `manifest.json`）。
@@ -49,9 +49,9 @@
 
 ### Firefox（臨時載入）
 
-Firefox 需要跟 Chrome 不同的 `background` manifest 設定，所以用另一個打包檔（`onedrive-pdf-download-unlocker-firefox.zip`）。該 zip 內已附上正確的 `manifest.json`，直接：
+Firefox 需要跟 Chrome 不同的 `background` manifest 設定，所以用另一個打包檔（`onedrive-pdf-download-unlocker-<版本>-firefox.zip`）。該 zip 內已附上正確的 `manifest.json`，直接：
 
-1. 從 [Releases](../../releases) 下載 `onedrive-pdf-download-unlocker-firefox.zip` 並解壓縮。
+1. 從 [Releases](../../releases) 下載 `onedrive-pdf-download-unlocker-<版本>-firefox.zip` 並解壓縮。
 2. 網址列輸入 `about:debugging#/runtime/this-firefox`。
 3. 點「載入臨時附加元件…」，選擇解壓後資料夾裡的 `manifest.json`。
 4. 到 OneDrive / SharePoint 的 PDF 預覽頁面測試。
@@ -66,7 +66,7 @@ Firefox 需要跟 Chrome 不同的 `background` manifest 設定，所以用另�
 powershell -ExecutionPolicy Bypass -File build.ps1
 ```
 
-它會用 `manifest.json` 打 Chrome 版，並自動把 `manifest.firefox.json` 改名成 `manifest.json` 打 Firefox 版。
+zip 檔名會自動帶上 `manifest.json` 裡的版本號。Chrome 版直接使用 `manifest.json`；Firefox 版的 manifest 由它**自動產生**（service worker 改成 `background.scripts`、拿掉 `debugger` 權限與投影片匯出腳本、加上 Firefox 附加元件設定），不必另外維護第二份 manifest。Windows PowerShell 5.1 與 PowerShell 7+ 都能執行（macOS／Linux 用 `pwsh build.ps1`）。
 
 ## 核心運作方式
 
@@ -82,7 +82,7 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 
 1. 在 PowerPoint 網頁版開啟簡報（`officeapps.live.com` 檢視器，或 SharePoint 上的簡報連結）。
 2. 兩種啟動方式擇一：
-   - **頁面右下角的橘色「匯出投影片（PDF）」按鈕**，點一下即開始；或
+   - **頁面右下角的橘色「匯出投影片（PDF）」按鈕**，點一下即開始（匯出期間會自動隱藏，不會被截進投影片；按 **✕** 可在這個頁面隱藏它）；或
    - 點擴充功能圖示，在彈出視窗選畫質後按「匯出投影片（PDF）」；只想要文字可按「文字」。
 3. 進度顯示在檢視器左下角。完成後會存到「下載」資料夾：一份圖片式 PDF，以及一份每張投影片文字的 `.txt`。
 
@@ -99,7 +99,7 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 
 ### 注意事項
 
-- **Arc 瀏覽器**只允許「表面截圖」，每張擷取時視窗會短暫閃進／閃出全螢幕；這是 Arc 的限制，**Chrome／Edge 不會閃**，建議用 Chrome／Edge 匯出。
+- **Arc 瀏覽器**只允許「表面截圖」，每張擷取時視窗會短暫閃進／閃出全螢幕；這是 Arc 的限制。Chrome／Edge 允許不經視窗表面的擷取方式，**預期不會閃**（依 API 行為推論，尚未在實機確認）。
 - **Firefox 不支援**投影片匯出（沒有 debugger API），PDF 下載功能仍可用。
 - 若另外裝了會強制解除防複製／防右鍵的擴充功能（例如 *Absolute Enable Right Click & Copy*），它們會在 PowerPoint 網頁版持續變動的 DOM 上不斷重掃，拖慢整個瀏覽器與匯出速度；匯出時請先停用該類擴充功能。
 
@@ -121,13 +121,14 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 ## 檔案結構
 
 - `manifest.json` - 擴充功能設定（Chrome / Edge）
-- `manifest.firefox.json` - Firefox 版 manifest（用 `background.scripts` 取代 service worker；打包時會改名成 `manifest.json`）
-- `build.ps1` - 打包腳本，在 `dist/` 產出 Chrome 與 Firefox 兩個 zip
+- `build.ps1` - 打包腳本，在 `dist/` 產出帶版本號的 Chrome 與 Firefox 兩個 zip（並自動產生 Firefox 版 manifest）
 - `background.js` - 監聽網路請求、偵測檔案、處理同分頁換檔重置（含防抖邏輯）、大型檔案分塊傳輸
 - `content.js` - 在頁面注入懸浮下載按鈕，含定位、主題判斷、a11y、關閉鈕顯示邏輯
 - `i18n.js` - 中英文字串字典 + 語言儲存/讀取
+- `util.js` - 彈出視窗、`content.js`、`slides.js` 共用的工具函式（檔名清理、大型檔案分塊傳輸、存檔）
 - `popup.js` / `popup.html` - 點擊擴充功能圖示彈出的視窗（含語言切換、候選檔案清單、投影片匯出與畫質選項）
-- `slides.js` - PowerPoint 網頁版投影片匯出的核心（鍵盤翻頁、等待渲染、逐張擷取、產生文字）
+- `slides.js` - PowerPoint 網頁版投影片匯出（鍵盤翻頁、等待渲染、逐張擷取、輸出 PDF／文字、進度列）
+- `slides-viewer.js` - 所有依賴 PowerPoint 網頁版頁面結構的部分（投影片、縮圖、目前位置、通知框的選擇器與判斷）；微軟改版時要修的就是這個檔
 - `slidepdf.js` - 把擷取到的 JPEG 組成圖片式 PDF
 - `icons/` - 擴充功能圖示
 - `PRIVACY.md` - 中英雙語隱私權政策
@@ -136,14 +137,14 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 
 ## 版本與下載
 
-原始碼直接放在這個 repo 的根目錄；每個版本會在 [Releases](../../releases) 頁面附上打包好的 zip（`-chrome.zip` 與 `-firefox.zip`），方便不想 clone 原始碼的人直接下載安裝。版本紀錄請見 [CHANGELOG.md](./CHANGELOG.md)。
+原始碼直接放在這個 repo 的根目錄；每個版本會在 [Releases](../../releases) 頁面附上打包好的 zip（`-<版本>-chrome.zip` 與 `-<版本>-firefox.zip`），方便不想 clone 原始碼的人直接下載安裝。版本紀錄請見 [CHANGELOG.md](./CHANGELOG.md)。
 
 ## 交付狀態
 
-目前版本 **1.2.0**。
+目前版本 **1.2.1**。
 
 - 所有 `.js` 檔通過語法檢查，載入執行無錯誤。
-- **PowerPoint 投影片匯出（1.2.0 新增）**：自 beta.1 起經多次實機測試（macOS + Arc／Chrome）調校，已在 50 張規模的簡報上完整驗證翻頁、渲染等待、逐張擷取與 PDF/文字輸出；畫質三檔與頁面內按鈕啟動皆已驗證。
+- **PowerPoint 投影片匯出（1.2.0 新增）**：自 beta.1 起經多次實機測試（macOS + Arc）調校，已在 50 張規模的簡報上完整驗證翻頁、渲染等待、逐張擷取與 PDF/文字輸出，以及從彈出視窗啟動的三檔畫質。頁面內按鈕（1.2.0）與 1.2.1 的改動已通過 Chromium 對模擬檢視器的自動化端對端測試（按鈕、鍵盤翻頁、通知處理、部分存檔、彈出視窗），但**尚未在實機確認**。
 - **大型檔案下載（issue #1）**：在 Chromium 中對一個「必須帶 `X-SPOPacToken` 標頭才給檔案」的模擬 SharePoint 伺服器做端對端測試，浮動按鈕與 popup 兩條路徑都測過，檔案大小涵蓋 8 MB、略超過 8 MB、70 MB、150 MB、400 MB，下載結果與原檔逐位元組完全一致。同樣的 70 MB 測試在 v1.0.0 會卡住，重現了原本的問題。
 - **Firefox（issue #2）**：已由提出需求的使用者確認可正常使用（投影片匯出除外，Firefox 不支援）。
 - 遇到問題請透過 Issues 回報（瀏覽器、檔案大小、發生什麼狀況）。
@@ -158,5 +159,5 @@ v1.0.0 仍保留在 [Releases](../../releases) 頁面，可作為退回的備援
 
 - 目前只覆蓋微軟全球商用雲（`*.sharepoint.com` 等），不含主權雲（`.sharepoint.us` / `.cn` / `.de`），若未來換到不同租戶環境可能需要再補。
 - 偵測邏輯靠網址關鍵字比對，若微軟未來改變這些端點的網址格式，可能需要更新 `URL_KEYWORDS`（在 `background.js`）。
-- 投影片匯出在 Arc 上每張會短暫閃全螢幕（Arc 只允許表面截圖），Chrome／Edge 不會；Firefox 不支援投影片匯出。
+- 投影片匯出在 Arc 上每張會短暫閃全螢幕（Arc 只允許表面截圖），Chrome／Edge 預期不會（尚未實機確認）；Firefox 不支援投影片匯出。
 - 投影片匯出目前為圖片式 PDF，文字另存在 `.txt`。**規劃中（下一版）**：可選取／可複製的隱形文字層，以及以 `deviceScaleFactor`（dsf）突破螢幕原生解析度的更高解析度輸出。

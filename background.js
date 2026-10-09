@@ -402,13 +402,30 @@ async function handleDownload(msg) {
 
 // ---- Slide export (PowerPoint for the web) ----
 // slides.js runs inside the PowerPoint viewer frame, walks the slides and asks
-// us to capture each one. chrome.tabs.captureVisibleTab is limited to screen
-// resolution, so we use the DevTools protocol instead: Page.captureScreenshot
-// with a clip scale re-renders the slide at 2x, keeping text sharp. The viewer
+// us to capture each one. chrome.tabs.captureVisibleTab has no clip or scale,
+// so we use the DevTools protocol instead: Page.captureScreenshot with a clip
+// and a scale renders just the slide at the chosen output width. The viewer
 // usually lives in a cross-origin iframe inside the SharePoint page, so the
 // slide rect it reports is frame-relative; we add the iframe's offset in the
 // top page (looked up once per export) before capturing.
-const slideExportByTab = {}; // { [tabId]: { offset: {x, y} } }
+const slideExportByTab = {}; // { [tabId]: { offset: {x, y}, frameId, frameUrl, surfaceOnly } }
+
+// Tabs whose capture session the user ended by closing the browser's
+// "is debugging this browser" bar. slides.js gets this error string back so it
+// can say "cancelled" (and save what it has) instead of a cryptic failure.
+const SLIDES_CANCELLED = "ODPDF_CANCELLED";
+const cancelledSlideTabs = new Set();
+function noSessionError(tabId) {
+  return new Error(cancelledSlideTabs.has(tabId) ? SLIDES_CANCELLED : "export not started");
+}
+// The error text to send back for a failed capture/input. A command that was
+// in flight when the user closed the bar fails with "Debugger is not attached",
+// possibly just before onDetach reports the cancel — give that event a moment
+// so the result still reads as "cancelled".
+async function slideErrorText(tabId, e) {
+  if (!cancelledSlideTabs.has(tabId)) await new Promise((r) => setTimeout(r, 150));
+  return cancelledSlideTabs.has(tabId) ? SLIDES_CANCELLED : e.message;
+}
 
 function cdp(tabId, method, params) {
   return new Promise((resolve, reject) => {
@@ -463,16 +480,17 @@ async function computeOffset(tabId) {
   return (res && res.result && res.result.value) || { x: 0, y: 0 };
 }
 
-// `debugger` is an optional permission (granted from the popup on the first
-// PDF export), so chrome.debugger may only appear after the worker started:
-// hook its detach event on first use rather than at load.
+// chrome.debugger doesn't exist on Firefox (no slide export there), so hook its
+// detach event only when the API is present.
 let detachHooked = false;
 function hookDebuggerDetach() {
   if (detachHooked || !chrome.debugger || !chrome.debugger.onDetach) return;
   detachHooked = true;
-  // User dismissed the "is debugging this browser" bar, or the tab went away.
-  chrome.debugger.onDetach.addListener((source) => {
-    if (source.tabId != null) delete slideExportByTab[source.tabId];
+  // The user dismissed the "is debugging this browser" bar, or the tab went away.
+  chrome.debugger.onDetach.addListener((source, reason) => {
+    if (source.tabId == null || !slideExportByTab[source.tabId]) return;
+    delete slideExportByTab[source.tabId];
+    if (reason === "canceled_by_user") cancelledSlideTabs.add(source.tabId);
   });
 }
 hookDebuggerDetach();
@@ -480,6 +498,7 @@ hookDebuggerDetach();
 async function beginSlideExport(tabId, frameId, frameUrl) {
   if (!chrome.debugger) throw new Error("debugger API unavailable (Chrome/Edge only)");
   hookDebuggerDetach();
+  cancelledSlideTabs.delete(tabId);
   if (!slideExportByTab[tabId]) {
     await attachDebugger(tabId);
     slideExportByTab[tabId] = { offset: { x: 0, y: 0 } };
@@ -497,19 +516,16 @@ async function beginSlideExport(tabId, frameId, frameUrl) {
   // thumbnail rail and status bar are never in the image regardless. Hiding
   // them made the page look content-only, which made some browsers (Arc)
   // auto-hide their own toolbar — the "flips into fullscreen every slide"
-  // the user reported. Leaving the chrome in place is invisible to the
-  // output and keeps the view stable.
-  // The "no edit permission" toast is dismissed by slides.js (dismissNotification)
-  // rather than CSS-hidden here — hiding a Fluent callout sends it into a
-  // re-render loop that janks the browser.
+  // the user reported. Nothing is injected into the top page either: the
+  // "no edit permission" toast is closed by slides.js, not CSS-hidden.
   return offset;
 }
 
 async function captureSlide(tabId, rect, scale, jpeg) {
   const st = slideExportByTab[tabId];
-  if (!st) throw new Error("export not started");
+  if (!st) throw noSessionError(tabId);
   const quality = jpeg >= 1 && jpeg <= 100 ? jpeg : 80;
-  const clip = { x: st.offset.x + rect.x, y: st.offset.y + rect.y, width: rect.width, height: rect.height, scale: scale || 2 };
+  const clip = { x: st.offset.x + rect.x, y: st.offset.y + rect.y, width: rect.width, height: rect.height, scale: scale || 1 };
   const shot = (fromSurface) => cdp(tabId, "Page.captureScreenshot", { format: "jpeg", quality, fromSurface, captureBeyondViewport: false, clip });
   // Prefer fromSurface:false — it grabs the pixels straight from the renderer
   // instead of the OS window surface, which avoids the per-slide fullscreen
@@ -522,27 +538,33 @@ async function captureSlide(tabId, rect, scale, jpeg) {
     const res = await shot(true);
     return res.data;
   }
+  const first = shot(false);
   try {
     const res = await Promise.race([
-      shot(false),
+      first,
       new Promise((_, reject) => setTimeout(() => reject(new Error("fromSurface:false timed out")), 4000)),
     ]);
     return res.data; // base64 JPEG
   } catch (e) {
     st.surfaceOnly = true; // don't try fromSurface:false again this export
+    // If it only timed out, let that request finish (briefly) before sending
+    // another, so two screenshots of the tab never run at once.
+    await Promise.race([first.catch(() => {}), new Promise((r) => setTimeout(r, 2000))]);
+    if (!slideExportByTab[tabId]) throw noSessionError(tabId);
     const res = await shot(true);
     return res.data;
   }
 }
 
-// Trusted input for navigating the viewer: a real click on a thumbnail or a
-// PageDown key press (synthetic DOM events from the content script are
-// ignored by parts of the viewer). Coordinates are frame-relative.
+// Trusted input for navigating the viewer: an arrow/Home/End key press, a
+// click on a thumbnail (fallback) or a mouse move (synthetic DOM events from
+// the content script are ignored by parts of the viewer). Coordinates are
+// frame-relative.
 const KEY_CODES = { PageDown: 34, PageUp: 33, Home: 36, End: 35, ArrowDown: 40, ArrowUp: 38 };
 
 async function slideInput(tabId, input) {
   const st = slideExportByTab[tabId];
-  if (!st) throw new Error("export not started");
+  if (!st) throw noSessionError(tabId);
   if (input.kind === "click") {
     const x = st.offset.x + input.x;
     const y = st.offset.y + input.y;
@@ -561,18 +583,8 @@ async function slideInput(tabId, input) {
 }
 
 function endSlideExport(tabId) {
+  cancelledSlideTabs.delete(tabId);
   if (!slideExportByTab[tabId]) return;
-  cdp(tabId, "Runtime.evaluate", {
-    expression: `(() => {
-      const st = document.getElementById("__odpdf_hide_top");
-      if (st) st.remove();
-      for (const el of document.querySelectorAll("[data-odpdf-hidden]")) {
-        el.style.visibility = el.getAttribute("data-odpdf-hidden");
-        el.removeAttribute("data-odpdf-hidden");
-      }
-      document.documentElement.removeAttribute("data-odpdf-isolated");
-    })()`,
-  }).catch(() => {});
   delete slideExportByTab[tabId];
   chrome.debugger.detach({ tabId }, () => void chrome.runtime.lastError);
 }
@@ -587,13 +599,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.type === "SLIDES_CAPTURE") {
     captureSlide(sender.tab.id, msg.rect, msg.scale, msg.jpeg)
       .then((data) => sendResponse({ ok: true, data }))
-      .catch((e) => sendResponse({ ok: false, error: e.message }));
+      .catch(async (e) => sendResponse({ ok: false, error: await slideErrorText(sender.tab.id, e) }));
     return true;
   }
   if (msg && msg.type === "SLIDES_INPUT") {
     slideInput(sender.tab.id, msg.input)
       .then(() => sendResponse({ ok: true }))
-      .catch((e) => sendResponse({ ok: false, error: e.message }));
+      .catch(async (e) => sendResponse({ ok: false, error: await slideErrorText(sender.tab.id, e) }));
     return true;
   }
   if (msg && msg.type === "SLIDES_TAB_TITLE") {
@@ -619,6 +631,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse(resp || null);
     });
     return true; // async
+  }
+  // The viewer frame (slides.js) announces "a deck is here" when it becomes
+  // ready, and "busy / not busy" around each export. Pass it to the top frame,
+  // where content.js shows, hides or restores the on-page button — no polling.
+  if (msg && msg.type === "SLIDES_STATE") {
+    const tabId = sender.tab && sender.tab.id;
+    if (tabId != null) {
+      chrome.tabs.sendMessage(
+        tabId,
+        { type: "SLIDES_STATE", total: msg.total, busy: !!msg.busy },
+        { frameId: 0 },
+        () => void chrome.runtime.lastError
+      );
+    }
+    sendResponse({ ok: true });
+    return;
   }
   // Start the slide export from the on-page button: relay SLIDES_RUN to the
   // viewer frame (same message the popup sends).

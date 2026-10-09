@@ -8,6 +8,9 @@
     --accent: #2563eb;
     --accent-dark: #1d4ed8;
     --accent-soft: #eef2ff;
+    /* fills behind white text: kept at >= 4.5:1 contrast in both themes */
+    --accent-fill: #2563eb;
+    --accent-fill-hover: #1d4ed8;
     --ink: #1f2328;
     --muted: #6b7280;
     --border: #e5e7eb;
@@ -31,6 +34,8 @@
       --accent: #4f8cff;
       --accent-dark: #6ea0ff;
       --accent-soft: #1c2740;
+      --accent-fill: #2f6fe0;
+      --accent-fill-hover: #2860c8;
       --ink: #e8eaed;
       --muted: #9aa1ad;
       --border: #2a2f37;
@@ -41,7 +46,7 @@
       --ok-soft: #14301f;
       --warn: #fb923c;
       --warn-soft: #33210f;
-      --ppt: #e8623d;
+      --ppt: #c4471f;
       --ppt-ink: #f0a184;
       --ppt-soft: #2a1712;
       --ppt-border: #52281b;
@@ -69,7 +74,7 @@
     align-items: center;
     gap: 9px;
     padding: 14px 16px 12px;
-    background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+    background: linear-gradient(135deg, var(--accent-fill), var(--accent-fill-hover));
     color: #fff;
   }
 
@@ -129,7 +134,7 @@
     padding: 10px;
     margin-bottom: 12px;
     cursor: pointer;
-    background: var(--accent);
+    background: var(--accent-fill);
     color: #fff;
     border: none;
     border-radius: 9px;
@@ -137,7 +142,7 @@
     font-weight: 600;
     transition: background 0.15s ease, transform 0.1s ease;
   }
-  #refresh:hover { background: var(--accent-dark); }
+  #refresh:hover { background: var(--accent-fill-hover); }
   #refresh:active { transform: scale(0.985); }
 
   .item {
@@ -177,7 +182,7 @@
     white-space: nowrap;
   }
   .badge.match { background: var(--accent-soft); color: var(--accent-dark); }
-  .badge.large { background: var(--accent-soft); color: var(--accent-dark); }
+  .badge.large { background: transparent; color: var(--ink); border: 1px solid var(--border); }
   .badge.size { background: var(--bg-soft); color: var(--muted); }
   .badge.auth-ok { background: var(--ok-soft); color: var(--ok); }
   .badge.auth-bad { background: var(--warn-soft); color: var(--warn); }
@@ -194,14 +199,15 @@
     font-weight: 600;
     transition: background 0.15s ease, color 0.15s ease, transform 0.1s ease;
   }
-  .item button:hover:not(:disabled) { background: var(--accent); color: #fff; }
+  .item button:hover:not(:disabled) { background: var(--accent-fill); border-color: var(--accent-fill); color: #fff; }
   .item button:active:not(:disabled) { transform: scale(0.985); }
   .item button:disabled { opacity: 0.6; cursor: default; }
   .item:first-of-type button {
-    background: var(--accent);
+    background: var(--accent-fill);
+    border-color: var(--accent-fill);
     color: #fff;
   }
-  .item:first-of-type button:hover:not(:disabled) { background: var(--accent-dark); }
+  .item:first-of-type button:hover:not(:disabled) { background: var(--accent-fill-hover); }
 
   #empty {
     font-size: 12.5px;
@@ -220,6 +226,10 @@
     border-top: 1px solid var(--border);
     margin-top: 4px;
   }
+
+  /* On a PowerPoint page the PDF-only parts don't apply (popup.js setSlidesMode). */
+  body.slides-mode #refresh,
+  body.slides-mode #empty { display: none !important; }
 
   /* PowerPoint slide export */
   #slidesBox {
@@ -317,6 +327,7 @@
   <footer id="footerText"></footer>
 
   <script src="i18n.js"></script>
+  <script src="util.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
