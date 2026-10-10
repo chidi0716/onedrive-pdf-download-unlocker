@@ -43,7 +43,9 @@
     fontWaitMs: 200,
     navSwitchMaxMs: 5000, // how long one key press may take to switch slides
     navStuckTries: 3, // key presses that moved nothing before clicking a thumbnail
-    captureTries: 4,
+    captureTries: 5, // shots per slide (it needs two identical ones)
+    verifyGapMs: 120, // pause between the two shots compared
+    pictureWaitMs: 5000, // max wait for a picture still showing its loading icon at capture time
     badCaptureRetryMs: 150,
     toastProbeSlides: 3, // look for the "no edit permission" toast on the first N slides
     toastSettleMs: 150,
@@ -126,7 +128,14 @@
     let prevSig = null, stable = 0;
     while (performance.now() - start < maxMs) {
       const imgs = [...wrap.querySelectorAll("img")];
-      const pending = imgs.some((i) => !i.complete || i.naturalWidth === 0);
+      // Only an image that is actually downloading counts as pending. The viewer
+      // keeps src-less placeholder <img>s in every slide
+      // (.SlidePictureIncrementalLoading) that never "load", and a broken or
+      // blocked image is complete-but-empty for good; treating either as
+      // pending made every slide wait out the full time cap.
+      const pending =
+        imgs.some((i) => (i.currentSrc || i.getAttribute("src")) && !i.complete) ||
+        V.loadingPictures(wrap) > 0; // a picture still shows its grey "loading" icon
       const sig = V.slideSignature(wrap);
       const same = sig === prevSig;
       prevSig = sig;
@@ -332,8 +341,19 @@
   const PAGE_WIDTH_PT = 960;
 
   // Capture the slide on screen as JPEG bytes, `outputWidth` pixels wide.
+  // A slide is accepted only once two consecutive shots are byte-identical.
+  // The render waits above go by DOM and network signals, but the viewer can
+  // still repaint a moment later (on a real 50-slide deck one table was once
+  // captured missing), and identical pixels are the only proof that nothing
+  // was still changing. Costs one extra shot per slide.
+  let reshots = 0; // shots that differed from the one before (reported in the log)
+  const sameBytes = (a, b) => {
+    if (!a || !b || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+  };
   async function captureCurrent(slideNo, outputWidth, jpeg) {
-    let bytes = null;
+    let prev = null, last = null, pictureWaited = false;
     for (let attempt = 0; attempt < TIMING.captureTries; attempt++) {
       let box = V.currentSlideBox();
       if (!box || box.method === "derived") box = await settledSlideBox();
@@ -350,16 +370,33 @@
       // Guard against a bad capture (the first shot of an export has
       // occasionally come back not-a-JPEG): only accept real JPEG bytes,
       // otherwise re-shoot this slide rather than poison the PDF.
-      if (b.length > 3 && b[0] === 0xff && b[1] === 0xd8) {
-        const after = V.currentSlideBox();
-        if (after && sameRect(after.rect, r)) return b;
-        bytes = b; // usable; shoot once more only because the layout moved
-      } else {
+      if (!(b.length > 3 && b[0] === 0xff && b[1] === 0xd8)) {
         await sleep(TIMING.badCaptureRetryMs);
+        continue;
       }
+      const after = V.currentSlideBox();
+      const moved = !(after && sameRect(after.rect, r));
+      // A picture that only started loading after the slide looked finished
+      // shows a grey "loading" box in a shot that is otherwise stable. Wait for
+      // it to swap in, then shoot again.
+      const wrap = V.visibleWrapper();
+      if (wrap && !pictureWaited && V.loadingPictures(wrap) > 0) {
+        pictureWaited = true; // at most one wait per slide; a picture that never loads is kept as is
+        const t = performance.now();
+        while (performance.now() - t < TIMING.pictureWaitMs && V.loadingPictures(wrap) > 0) await sleep(TIMING.slidePollMs);
+        await nextFrame();
+        prev = null;
+        last = b;
+        continue;
+      }
+      if (!moved && sameBytes(prev, b)) return b;
+      if (prev) reshots++;
+      prev = moved ? null : b;
+      last = b;
+      await sleep(TIMING.verifyGapMs);
     }
-    if (!bytes) throw new Error("slide " + slideNo + ": capture was not a valid image");
-    return bytes;
+    if (!last) throw new Error("slide " + slideNo + ": capture was not a valid image");
+    return last; // never settled (e.g. an animated picture): keep the latest shot
   }
 
   async function exportSlides(withImages, quality) {
@@ -371,6 +408,7 @@
     const texts = [];
     const images = [];
     const timings = { nav: 0, render: 0, capture: 0 };
+    reshots = 0;
     const secs = () => ((performance.now() - t0) / 1000).toFixed(1);
 
     // Text-only fast path: every slide already has a container in the DOM.
@@ -459,7 +497,7 @@
       U.saveBlob(window.ODPDF_PDF.buildPdfBlob(images, outputWidth / PAGE_WIDTH_PT), base + ".pdf");
     }
     U.saveBlob(new Blob([texts.slice(0, done).join("\n\n") + "\n"], { type: "text/plain;charset=utf-8" }), base + ".txt");
-    console.log("[odpdf] slide export", JSON.stringify({ slides: n, done, secs: secs(), timingsMs: Object.fromEntries(Object.entries(timings).map(([k, v]) => [k, Math.round(v)])) }));
+    console.log("[odpdf] slide export", JSON.stringify({ slides: n, done, secs: secs(), reshots, timingsMs: Object.fromEntries(Object.entries(timings).map(([k, v]) => [k, Math.round(v)])) }));
     if (failure) {
       failure.partial = done;
       failure.total = n;

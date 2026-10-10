@@ -198,7 +198,30 @@
     const imgs = wrap.querySelectorAll("img");
     let loaded = 0;
     for (const i of imgs) if (i.complete && i.naturalWidth > 0) loaded++;
-    return wrap.querySelectorAll("*").length + "/" + (wrap.textContent || "").length + "/" + imgs.length + "/" + loaded;
+    // Pictures are SVG <image>s whose href is set when the picture arrives
+    // (placeholder icon first, then the real image), so count those too: a
+    // picture appearing or swapping in changes the fingerprint.
+    let pictures = 0;
+    for (const im of wrap.querySelectorAll("image")) if (im.getAttribute("href") || im.getAttribute("xlink:href")) pictures++;
+    return wrap.querySelectorAll("*").length + "/" + (wrap.textContent || "").length + "/" + imgs.length + "/" + loaded + "/" + pictures + "/" + loadingPictures(wrap);
+  }
+
+  // How many pictures in `wrap` are still showing the viewer's "loading"
+  // placeholder. A picture is an SVG <image> whose href is the real JPEG/PNG
+  // once loaded; until then it is a small (48-unit) centred "image" icon drawn
+  // from an inline SVG (data:image/svg+xml) over a grey box. Seen on a real
+  // deck: the swap takes a few hundred ms after the slide appears, longer on a
+  // slow network. (The viewer's src-less .SlidePictureIncrementalLoading <img>s
+  // are NOT a signal: they exist on every slide and never load.)
+  function loadingPictures(wrap) {
+    let n = 0;
+    for (const im of wrap.querySelectorAll("image")) {
+      const href = im.getAttribute("href") || im.getAttribute("xlink:href") || "";
+      if (!href.startsWith("data:image/svg+xml")) continue;
+      const w = parseFloat(im.getAttribute("width")), h = parseFloat(im.getAttribute("height"));
+      if (w > 0 && w <= 64 && h > 0 && h <= 64) n++;
+    }
+    return n;
   }
 
   // Hide the "Click to add ..." prompts and empty-placeholder chrome while
@@ -281,6 +304,7 @@
     slideTextFrom,
     wrapperHasContent,
     slideSignature,
+    loadingPictures,
     hideHints,
     dismissNotification,
   };
